@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>GoWatch 监控面板</title>
+<style>
+    body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #ddd; }
+    h1 { color: #4fc3f7; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #444; padding: 8px; text-align: left; }
+    th { background: #2d2d2d; }
+    .up { color: #81c784; font-weight: bold; }
+    .down { color: #e57373; font-weight: bold; }
+    #meta { color: #888; font-size: 14px; margin-top: 10px; }
+</style>
+</head>
+<body>
+    <h1>🛰️ GoWatch</h1>
+    <div id="meta">上次刷新: <span id="time">-</span></div>
+    <table>
+        <thead>
+            <tr>
+                <th>Target</th>
+                <th>Status</th>
+                <th>Latency</th>
+                <th>Error</th>
+                <th>Last Check</th>
+            </tr>
+        </thead>
+        <tbody id="body"></tbody>
+    </table>
+
+<script>
+async function refresh() {
+    try {
+        const resp = await fetch('/api/status');
+        const data = await resp.json();
+        const tbody = document.getElementById('body');
+        tbody.innerHTML = '';
+        for (const r of data) {
+            const tr = document.createElement('tr');
+            const statusClass = r.Status === 'up' ? 'up' : 'down';
+            tr.innerHTML = `
+                <td>${r.Target}</td>
+                <td class="${statusClass}">${r.Status.toUpperCase()}</td>
+                <td>${(r.Latency / 1e6).toFixed(2)} ms</td>
+                <td>${r.Error || '-'}</td>
+                <td>${new Date(r.Timestamp).toLocaleString()}</td>
+            `;
+            tbody.appendChild(tr);
+        }
+        document.getElementById('time').textContent = new Date().toLocaleTimeString();
+    } catch (e) {
+        console.error(e);
+    }
+}
+refresh();
+setInterval(refresh, 5000); // 每 5 秒刷新
+</script>
+</body>
+</html>

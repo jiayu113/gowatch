@@ -1,0 +1,25 @@
+targets:
+  - name: baidu-home
+    type: http
+    url: https://www.baidu.com
+    timeout: 3s
+
+  - name: local-mysql
+    type: tcp
+    url: 127.0.0.1:3306
+    timeout: 2s
+
+  - name: k8s-api
+    type: tcp
+    url: 127.0.0.1:6443
+    timeout: 1s
+    
+  - name: github-home
+    type: http
+    url: https://www.github.com
+    timeout: 3s
+
+  - name: google-home
+    type: http
+    url: https://www.google.com
+    timeout: 3s
