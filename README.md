@@ -4,7 +4,6 @@
 
 ![alt text](image.png)
 ![alt text](image-1.png)
-![alt text](image-2.png)
 
 GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果写入 SQLite 持久化,并通过 HTTP API + Web UI + Prometheus `/metrics` 端点暴露出来。整个服务是一个**常驻进程**,支持 graceful shutdown,可以放心 Ctrl+C 或 SIGTERM。
 
@@ -68,16 +67,32 @@ go run ./cmd/gowatch
 ```yaml
 targets:
   - name: baidu-home
+    type: http
     url: https://www.baidu.com
-  - name: github-home
-    url: https://www.github.com
-  - name: k8s-api
-    url: 127.0.0.1:6443
+    timeout: 3s
+
   - name: local-mysql
+    type: tcp
     url: 127.0.0.1:3306
+    timeout: 2s
+
+  - name: k8s-api
+    type: tcp
+    url: 127.0.0.1:6443
+    timeout: 1s
+
+  - name: github-home
+    type: http
+    url: https://www.github.com
+    timeout: 3s
+
+  - name: google-home
+    type: http
+    url: https://www.google.com
+    timeout: 3s
 ```
 
-URL 以 `http://` / `https://` 开头会自动用 HTTPChecker,否则视作 `host:port` 走 TCPChecker。
+通过 `type` 字段显式指定探测协议(`http` 或 `tcp`),scheduler 会构造对应的 Checker 实例。要新增 ICMP / gRPC / DNS 等探测方式,只需实现 `Checker` 接口并在 `NewPool` 的 switch 里加一个 case。
 
 ### 启动服务
 
@@ -203,11 +218,11 @@ Prometheus 兼容的指标端点,暴露:
 
 | 失败类型 | 示例 | Latency | Error 信号 |
 |---------|------|---------|-----------|
-| **应用层超时** | github-home (GFW 阻断) | ~3000ms | `context deadline exceeded` |
+| **应用层超时** | github-home / google-home (出境网络不稳定) | ~3000ms | `context deadline exceeded` |
 | **传输层 RST** | k8s-api (端口未监听) | < 1ms | `connection refused` |
 | **正常响应** | baidu-home | ~150ms | - |
 
-这一观察启发了 v2 的改进方向:**给 `errors_total` 加 `error_type` label(timeout / refused / dns / non_2xx)**,让监控不仅能告诉你"挂了",还能告诉你"怎么挂的"。
+1 小时跑下来还有一个值得记录的观察:**GitHub 这个 target 实际上在 timeout / 200 OK / 4xx 之间反复抖动**(出境网络的真实状态),但当前的 `errors_total` 是单一计数器 —— 它能告诉你"这个 target 出错了多少次",却看不出每次错误到底是哪种类型。这正是 v2 计划给 `errors_total` 加 `error_type` label(`timeout` / `refused` / `dns` / `non_2xx`)的原因:**有了维度,告警规则才能区分"短暂网络抖动"和"服务真的挂了"**,而不是把所有失败一锅端。
 
 ---
 
@@ -265,7 +280,8 @@ gowatch/
 │   ├── checker/                     # Checker 接口 + HTTP/TCP 实现
 │   ├── storage/                     # SQLite 封装 + 单元测试
 │   ├── api/                         # HTTP Handler + Web UI
-│   └── scheduler/                   # Worker Pool + Ticker + Collector
+│   ├── scheduler/                   # Worker Pool + Ticker + Collector
+│   └── metrics/                     # Prometheus 指标定义
 ├── config.yaml                      # 配置示例
 ├── go.mod
 └── README.md
