@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io/fs"
 	"log"
 	"net/http"
 	"strconv"
@@ -66,8 +67,15 @@ func (h *Handler) Routes() *http.ServeMux {
 	// 访问/metrics时会自动把所有注册的metric序列化成Prometheus能抓取的文本格式输出出来
 	mux.Handle("/metrics", promhttp.Handler())
 
+	// embed.FS 内部路径是 "static/index.html",
+	// fs.Sub 剥掉 "static" 前缀,让 mux "/" 路由直接对应 index.html
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		// 路径写错了,启动期就 panic,fail fast
+		panic(err)
+	}
 	// 托管 Web UI 目录
-	mux.Handle("/", http.FileServer(http.Dir("./internal/api/static")))
+	mux.Handle("/", http.FileServer(http.FS(sub)))
 	return mux
 }
 
