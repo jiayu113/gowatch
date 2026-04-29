@@ -39,13 +39,13 @@ async function refresh() {
         tbody.innerHTML = '';
         for (const r of data) {
             const tr = document.createElement('tr');
-            const statusClass = r.Status === 'up' ? 'up' : 'down';
+            const statusClass = r.status === 'up' ? 'up' : 'down';
             tr.innerHTML = `
-                <td>${r.Target}</td>
-                <td class="${statusClass}">${r.Status.toUpperCase()}</td>
-                <td>${(r.Latency / 1e6).toFixed(2)} ms</td>
-                <td>${r.Error || '-'}</td>
-                <td>${new Date(r.Timestamp).toLocaleString()}</td>
+                <td>${r.target}</td>
+                <td class="${statusClass}">${r.status.toUpperCase()}</td>
+                <td>${r.latency_ms.toFixed(3)} ms</td>
+                <td>${r.error || '-'}</td>
+                <td>${new Date(r.timestamp).toLocaleString()}</td>
             `;
             tbody.appendChild(tr);
         }

@@ -12,6 +12,35 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// ResultDTO 是 API 对外输出的 Result 表示。
+// 内部用 time.Duration 存纳秒精度,API 层转成毫秒 float 给前端,
+// 字段名走 camelCase + 单位后缀,自我说明。
+type ResultDTO struct {
+	Target    string    `json:"target"`
+	Status    string    `json:"status"`
+	LatencyMs float64   `json:"latency_ms"`
+	Error     string    `json:"error"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+func toDTO(r checker.Result) ResultDTO {
+	return ResultDTO{
+		Target:    r.Target,
+		Status:    r.Status,
+		LatencyMs: float64(r.Latency) / float64(time.Millisecond),
+		Error:     r.Error,
+		Timestamp: r.Timestamp,
+	}
+}
+
+func toDTOs(results []checker.Result) []ResultDTO {
+	dtos := make([]ResultDTO, len(results))
+	for i, r := range results {
+		dtos[i] = toDTO(r)
+	}
+	return dtos
+}
+
 // Handler 是所有 HTTP 处理器的聚合。
 // 持有 store 的引用，这样 handler 就能读数据库。
 type Handler struct {
@@ -62,10 +91,7 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if results == nil {
-		results = []checker.Result{}
-	}
-	writeJSON(w, http.StatusOK, results)
+	writeJSON(w, http.StatusOK, toDTOs(results))
 }
 
 // History 返回某个目标的历史记录
@@ -94,10 +120,7 @@ func (h *Handler) History(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if results == nil {
-		results = []checker.Result{}
-	}
-	writeJSON(w, http.StatusOK, results)
+	writeJSON(w, http.StatusOK, toDTOs(results))
 }
 
 // writeJSON 抽出的小工具：统一设置响应头 + 状态码 + 编码。
