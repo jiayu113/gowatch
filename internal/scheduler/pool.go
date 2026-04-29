@@ -29,7 +29,10 @@ func NewPool(store *storage.Store, targets []config.Target, workers int, interva
 			checkers[t.Name] = &checker.HTTPChecker{Target: t}
 		case "tcp":
 			checkers[t.Name] = &checker.TCPChecker{Target: t}
+		default:
+			log.Fatalf("config error: target %q has unknow type %q (must be http or tcp)", t.Name, t.Type)
 		}
+
 	}
 	return &Pool{
 		store:    store,
