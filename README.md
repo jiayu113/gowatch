@@ -4,7 +4,6 @@
 
 ![alt text](image.png)
 ![alt text](image-1.png)
-![alt text](image-2.png)
 
 GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果写入 SQLite 持久化,并通过 HTTP API + Web UI + Prometheus `/metrics` 端点暴露出来。整个服务是一个**常驻进程**,支持 graceful shutdown,可以放心 Ctrl+C 或 SIGTERM。
 
@@ -68,13 +67,29 @@ go run ./cmd/gowatch
 ```yaml
 targets:
   - name: baidu-home
+    type: http
     url: https://www.baidu.com
-  - name: github-home
-    url: https://www.github.com
-  - name: k8s-api
-    url: 127.0.0.1:6443
+    timeout: 3s
+
   - name: local-mysql
+    type: tcp
     url: 127.0.0.1:3306
+    timeout: 2s
+
+  - name: k8s-api
+    type: tcp
+    url: 127.0.0.1:6443
+    timeout: 1s
+    
+  - name: github-home
+    type: http
+    url: https://www.github.com
+    timeout: 3s
+
+  - name: google-home
+    type: http
+    url: https://www.google.com
+    timeout: 3s
 ```
 
 URL 以 `http://` / `https://` 开头会自动用 HTTPChecker,否则视作 `host:port` 走 TCPChecker。
