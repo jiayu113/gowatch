@@ -23,3 +23,11 @@ targets:
     type: http
     url: https://www.google.com
     timeout: 3s
+
+  - name: dns-fail-test
+    type: http
+    url: http://xxx-not-exist-12345.com
+    
+  - name: non2xx-test
+    type: http
+    url: https://httpbin.org/status/500

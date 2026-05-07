@@ -40,11 +40,11 @@ var (
 			Name: "gowatch_check_errors_total",
 			Help: "Total number of check errors",
 		},
-		[]string{"target"},
+		[]string{"target", "error_type"},
 	)
 )
 
-func Record(target, status string, latencySeconds float64, hasError bool) {
+func Record(target, status, errType string, latencySeconds float64, hasError bool) {
 	// 总检测次数+1（按target和status分）
 	CheckTotal.WithLabelValues(target, status).Inc()
 	// 记录这次延迟
@@ -54,9 +54,7 @@ func Record(target, status string, latencySeconds float64, hasError bool) {
 		TargetUp.WithLabelValues(target).Set(1)
 	} else {
 		TargetUp.WithLabelValues(target).Set(0)
-	}
-	// 如果有错，错误次数+1
-	if hasError {
-		CheckErrors.WithLabelValues(target).Inc()
+		// 失败才记 errors，按 type 分桶
+		CheckErrors.WithLabelValues(target, errType).Inc()
 	}
 }

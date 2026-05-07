@@ -69,7 +69,7 @@ func (p *Pool) Run(ctx context.Context) {
 			// r.Status — 状态，"up"或"down"
 			// r.Latency.Seconds() — 把延迟从time.Duration转成秒的float64,Histogram需要float64
 			// r.Error != "" — Error字段不为空说明有错误，转成bool传给hasError
-			metrics.Record(r.Target, r.Status, r.Latency.Seconds(), r.Error != "")
+			metrics.Record(r.Target, r.Status, r.ErrorType, r.Latency.Seconds(), r.Error != "")
 		}
 	}()
 	ticker := time.NewTicker(p.interval)

@@ -19,5 +19,6 @@ type Result struct {
 	Status    string
 	Latency   time.Duration
 	Error     string
+	ErrorType string
 	Timestamp time.Time
 }
