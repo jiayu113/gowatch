@@ -1,11 +1,11 @@
 targets:
   - name: baidu-home
     type: http
-    url: https://www.baidu.com
+    url: https://www.qq.com
     timeout: 3s
 
   - name: local-mysql
-    type: tcp
+    type: http
     url: 127.0.0.1:3306
     timeout: 2s
 
@@ -19,11 +19,6 @@ targets:
     url: https://www.github.com
     timeout: 3s
 
-  - name: google-home
-    type: http
-    url: https://www.google.com
-    timeout: 3s
-
   - name: dns-fail-test
     type: http
     url: http://xxx-not-exist-12345.com
@@ -31,3 +26,8 @@ targets:
   - name: non2xx-test
     type: http
     url: https://httpbin.org/status/500
+
+  - name: bing
+    type: http
+    url: https://www.baidu.com
+    timeout: 3s

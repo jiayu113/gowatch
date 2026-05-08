@@ -15,31 +15,53 @@ import (
 // Pool 是检测调度器
 type Pool struct {
 	store    *storage.Store
+	mu       sync.RWMutex
 	targets  []config.Target
 	workers  int
 	interval time.Duration
 	checkers map[string]checker.Checker // target 名 -> 对应的 Checker 实例
+	reloadCh chan *config.Config
 }
 
-func NewPool(store *storage.Store, targets []config.Target, workers int, interval time.Duration) *Pool {
-	checkers := make(map[string]checker.Checker)
-	for _, t := range targets {
-		switch t.Type {
-		case "http":
-			checkers[t.Name] = &checker.HTTPChecker{Target: t}
-		case "tcp":
-			checkers[t.Name] = &checker.TCPChecker{Target: t}
-		default:
-			log.Fatalf("config error: target %q has unknow type %q (must be http or tcp)", t.Name, t.Type)
-		}
-
-	}
-	return &Pool{
+func NewPool(store *storage.Store, cfg *config.Config, workers int, interval time.Duration) *Pool {
+	p := &Pool{
 		store:    store,
-		targets:  targets,
 		workers:  workers,
 		interval: interval,
-		checkers: checkers,
+		reloadCh: make(chan *config.Config, 1),
+	}
+	p.applyConfig(cfg)
+	return p
+}
+
+// applyConfig 写入 targets + checkers,加锁
+func (p *Pool) applyConfig(cfg *config.Config) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.targets = cfg.Targets
+	p.checkers = make(map[string]checker.Checker, len(cfg.Targets))
+	for _, t := range cfg.Targets {
+		switch t.Type {
+		case "http":
+			p.checkers[t.Name] = &checker.HTTPChecker{Target: t}
+		case "tcp":
+			p.checkers[t.Name] = &checker.TCPChecker{Target: t}
+		default:
+			log.Printf("scheduler: unknown type=%q for target=%q, skipped", t.Type, t.Name)
+		}
+	}
+}
+
+// Reload 把新配置塞进 channel，不阻塞；buffer=1 保证最新一份覆盖旧的
+func (p *Pool) Reload(cfg *config.Config) {
+	select {
+	case p.reloadCh <- cfg:
+	default:
+		select {
+		case <-p.reloadCh:
+		default:
+		}
+		p.reloadCh <- cfg
 	}
 }
 
@@ -89,12 +111,19 @@ func (p *Pool) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			p.dispatchJobs(jobs)
+		case cfg := <-p.reloadCh:
+			log.Println("scheduler: reloading config")
+			p.applyConfig(cfg)
+			log.Printf("scheduler: reloaded, targets=%d", len(cfg.Targets))
 		}
 	}
 }
 
 func (p *Pool) dispatchJobs(jobs chan<- config.Target) {
-	for _, t := range p.targets {
+	p.mu.RLock()
+	targets := p.targets
+	p.mu.RUnlock()
+	for _, t := range targets {
 		select {
 		case jobs <- t:
 		default:
@@ -107,7 +136,14 @@ func (p *Pool) dispatchJobs(jobs chan<- config.Target) {
 func (p *Pool) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan config.Target, results chan<- checker.Result) {
 	defer wg.Done()
 	for target := range jobs {
+		p.mu.RLock()
 		c := p.checkers[target.Name]
+		p.mu.RUnlock()
+		if c == nil {
+			// reload 删掉了这个 target，但 jobs channel 里还有它的旧 job
+			log.Printf("worker: checker not found for target=%s, skip", target.Name)
+			continue
+		}
 		checkCtx, cancel := context.WithTimeout(ctx, target.Timeout)
 		result := c.Check(checkCtx)
 		cancel()

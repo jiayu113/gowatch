@@ -91,12 +91,30 @@ func main() {
 	defer stop()
 
 	// 启动scheduler，用done channel等它真的退出
-	pool := scheduler.NewPool(store, cfg.Targets, 5, 10*time.Second)
+	pool := scheduler.NewPool(store, cfg, 5, 10*time.Second)
 	poolDone := make(chan struct{})
 	go func() {
 		pool.Run(ctx)
 		close(poolDone)
 	}()
+
+	// 启动 config watcher（可选，watcher 起不来不影响主流程）
+	reloadCh := make(chan *config.Config, 1)
+	if err := config.Watch(ctx, *configPath, reloadCh); err != nil {
+		log.Printf("config: watcher disabled:%v", err)
+	} else {
+		log.Println("config: watching for changes...")
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case cfg := <-reloadCh:
+					pool.Reload(cfg)
+				}
+			}
+		}()
+	}
 
 	// 启动HTTP server，goroutine不阻塞
 	handler := api.NewHandler(store)
