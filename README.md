@@ -18,6 +18,7 @@ GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果按**错
 - **REST API + Web UI** — 实时状态、按 target 查历史,前端 5 秒自动刷新
 - **Prometheus 集成** — `/metrics` 端点暴露 counter / histogram / gauge,可直接接 Grafana
 - **Graceful Shutdown** — `signal.NotifyContext` + `server.Shutdown` + scheduler done channel 三步收尾,不丢数据
+- **配置热加载(fsnotify)** — 监听 config.yaml 变化,200ms debounce 防抖,下一轮 dispatch 切换到新 checker;watcher 起不来时降级为静态配置,不阻塞主流程
 - **CLI 工具化** — 同一个二进制支持服务模式、查询历史、查看最新状态三种用法
 
 ---
@@ -42,6 +43,28 @@ ctx.Done() ─→ close(jobs) ─→ workers 退出 ─→ close(results) ─→
 - **主 goroutine** — Ticker 派活、监听 ctx 信号、协调关闭顺序
 - **Worker Pool** — 并发跑 `Checker.Check(ctx)`,IO 密集场景天然受益于并发,每个 worker 用 per-target 独立 ctx 避免互相拖累
 - **Collector** — 单独 goroutine 串行写库 + 同步更新 Prometheus 指标,把 IO 和指标写入与 worker 解耦
+
+### 配置热加载链路(v2 新增)
+
+```
+config.yaml 修改 → fsnotify Event → debounce 200ms → Load + Validate
+                                                          │
+                                                          ▼
+                                                    reloadCh (buffer=1)
+                                                          │
+                                                          ▼
+                                                    scheduler.Reload
+                                                          │
+                                                          ▼
+                                              下一轮 dispatch 应用新 checker
+```
+
+**关键设计:**
+
+- **debounce 防抖**: 编辑器一次保存可能触发多次 fsnotify 事件,200ms 内的连续事件合并成一次 reload
+- **reloadCh buffer=1 + 覆盖语义**: 如果 reload 比 scheduler 处理快,新 cfg 覆盖旧 cfg,scheduler 永远拿到最新一份
+- **加载失败不切换**: LoadFromFile 失败仅打日志,scheduler 继续用旧配置,避免一次错误配置把监控打挂
+- **优雅降级**: watcher 启动失败(权限 / inotify 资源等),主流程照常启动,只是失去热加载能力
 
 ---
 
@@ -90,6 +113,8 @@ targets:
 
 通过 `type` 字段显式指定探测协议(`http` 或 `tcp`),scheduler 会构造对应的 Checker 实例。要新增 ICMP / gRPC / DNS 等探测方式,只需实现 `Checker` 接口并在 `NewPool` 的 switch 里加一个 case。
 
+修改后保存,无需重启;watcher 检测到变化后会触发 reload,下一轮 dispatch 自动用新配置。
+
 ### 启动服务
 
 ```bash
@@ -108,6 +133,7 @@ targets:
 ```
 gowatch started
 
+2026/05/07 11:50:32 config: watching for changes...
 2026/05/07 11:50:32 scheduler: started workers=5 interval=10s
 2026/05/07 11:50:32 服务启动,监听 :8080
 2026/05/07 11:50:32 可用端点:
@@ -207,7 +233,7 @@ Prometheus 兼容的指标端点(详见下一节)。
 gowatch/
 ├── cmd/gowatch/main.go              # 入口:flag、模式分派、生命周期管理
 ├── internal/
-│   ├── config/                      # YAML 配置加载
+│   ├── config/                      # YAML 配置加载 + fsnotify 热加载
 │   ├── checker/                     # Checker 接口 + HTTP/TCP 实现 + 错误分类
 │   ├── storage/                     # SQLite 封装 + 单元测试
 │   ├── api/                         # HTTP Handler + Web UI(embed.FS)
@@ -267,12 +293,14 @@ scrape_configs:
 - [ ] **`ClassifyNetErr` 真实包装链集成测试**——用 `httptest` 触发真实 dial 失败,覆盖 mock 漏掉的路径
 - [ ] **`error_type` 维度的长跑验证**——基于新维度重做 soak test,出 Grafana 面板
 - [ ] non_2xx 端到端验证(目前依赖 unit test,等 staging 环境补)
+- [ ] **config 加载时 URL schema 校验**——type=http 校验 http/https 前缀,type=tcp 校验 host:port;否则配错时 latency=0s 看起来像服务挂,实际是配置错
+- [ ] **fsnotify watcher 改为监听父目录**——当前监听文件本身,在 vim / VSCode 等 atomic save 编辑器下首次保存后 watcher 失效;改为监听父目录 + filter base name 可解决
 
-### v2 🚧 Next
+### v2 🚧 In Progress
 
-- [ ] config 热加载(fsnotify)
-- [ ] 告警规则引擎(基于 `error_type` + 阈值,触发 webhook / 邮件)
-- [ ] 多实例部署 + etcd 协调,避免重复探测
+- [x] **config 热加载(fsnotify)** — debounce 防抖 + 优雅降级 + reload 不停机切换
+- [ ] **告警规则引擎** — 基于 `error_type` + 阈值触发 webhook / 邮件,复用 v1 已有的错误分桶维度
+- [ ] **多实例部署 + etcd 协调** — 避免重复探测,主备切换
 
 ### v3 🔮 长期
 
