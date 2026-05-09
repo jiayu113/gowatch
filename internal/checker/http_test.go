@@ -50,12 +50,10 @@ func TestHTTPChecker_Check(t *testing.T) {
 			srv := httptest.NewServer(tt.handler)
 			defer srv.Close()
 
-			h := &HTTPChecker{
-				Target: config.Target{
-					Name: tt.name,
-					URL:  srv.URL,
-				},
-			}
+			h := NewHTTPChecker(config.Target{
+				Name: tt.name,
+				URL:  srv.URL,
+			})
 
 			ctx := context.Background()
 			if tt.ctxTimeout > 0 {
@@ -88,9 +86,7 @@ func TestHTTPChecker_Check_ConnectionRefused(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	h := &HTTPChecker{
-		Target: config.Target{Name: "refused", URL: url},
-	}
+	h := NewHTTPChecker(config.Target{Name: "refused", URL: url})
 
 	got := h.Check(context.Background())
 

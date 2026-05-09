@@ -43,7 +43,7 @@ func (p *Pool) applyConfig(cfg *config.Config) {
 	for _, t := range cfg.Targets {
 		switch t.Type {
 		case "http":
-			p.checkers[t.Name] = &checker.HTTPChecker{Target: t}
+			p.checkers[t.Name] = checker.NewHTTPChecker(t)
 		case "tcp":
 			p.checkers[t.Name] = &checker.TCPChecker{Target: t}
 		default:
@@ -86,12 +86,6 @@ func (p *Pool) Run(ctx context.Context) {
 			if err := p.store.Save(r); err != nil {
 				log.Printf("scheduler: save failed:%v", err)
 			}
-			// 同时更新 metrics
-			// r.Target — target名字，比如"baidu-home"
-			// r.Status — 状态，"up"或"down"
-			// r.Latency.Seconds() — 把延迟从time.Duration转成秒的float64,Histogram需要float64
-			// r.Error != "" — Error字段不为空说明有错误，转成bool传给hasError
-			metrics.Record(r.Target, r.Status, r.ErrorType, r.Latency.Seconds(), r.Error != "")
 		}
 	}()
 	ticker := time.NewTicker(p.interval)
@@ -148,6 +142,7 @@ func (p *Pool) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan confi
 		result := c.Check(checkCtx)
 		cancel()
 		log.Printf("worker: target=%s status=%s latency=%s", result.Target, result.Status, result.Latency)
+		metrics.Record(result.Target, result.Status, result.ErrorType, result.Latency.Seconds(), result.Error != "")
 		results <- result
 	}
 }

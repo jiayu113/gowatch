@@ -11,6 +11,20 @@ import (
 
 type HTTPChecker struct {
 	Target config.Target
+	client *http.Client
+}
+
+func NewHTTPChecker(t config.Target) *HTTPChecker {
+	return &HTTPChecker{
+		Target: t,
+		client: &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 5,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
+	}
 }
 
 func (h *HTTPChecker) result(status, errMsg, errType string, start time.Time) Result {
@@ -30,8 +44,7 @@ func (h *HTTPChecker) Check(ctx context.Context) Result {
 	if err != nil {
 		return h.result(StatusDown, err.Error(), ClassifyNetErr(err), start)
 	}
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := h.client.Do(req)
 	if err != nil {
 		return h.result(StatusDown, err.Error(), ClassifyNetErr(err), start)
 	}
