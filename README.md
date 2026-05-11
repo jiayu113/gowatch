@@ -9,7 +9,7 @@ GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果按**错
 
 ---
 
-## ✨ 特性
+##  特性
 
 - **多协议健康检查** — HTTP(S) 状态码 / TCP 端口连通性,通过 `Checker` 接口扩展
 - **并发 Worker Pool 调度** — 固定 worker + Ticker 周期触发 + collector 解耦写库
@@ -23,7 +23,7 @@ GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果按**错
 
 ---
 
-## 🏗️ 架构
+##  架构
 
 ```
                  主 goroutine (scheduler.Run)
@@ -68,7 +68,7 @@ config.yaml 修改 → fsnotify Event → debounce 200ms → Load + Validate
 
 ---
 
-## 🚀 快速开始
+##  快速开始
 
 ### 安装
 
@@ -167,7 +167,7 @@ gowatch started
 
 ---
 
-## 📡 API
+##  API
 
 打开浏览器访问 `http://localhost:8080` 看 Web 面板,或者直接调 API:
 
@@ -213,7 +213,7 @@ Prometheus 兼容的指标端点(详见下一节)。
 
 ---
 
-## 📊 Prometheus 指标
+##  Prometheus 指标
 
 | 指标 | 类型 | Labels | 说明 |
 |------|------|--------|------|
@@ -225,7 +225,7 @@ Prometheus 兼容的指标端点(详见下一节)。
 
 ---
 
-## 🛠️ 开发
+##  开发
 
 ### 目录结构
 
@@ -277,9 +277,9 @@ scrape_configs:
 
 ---
 
-## 📝 路线
+##  路线
 
-### v1 ✅ Done
+### v1  Done
 
 - [x] config / checker / storage / api / scheduler 五大核心包
 - [x] CLI 多模式 + Web UI(embed.FS 单二进制)
@@ -287,7 +287,7 @@ scrape_configs:
 - [x] Graceful shutdown + 关闭顺序保证
 - [x] 1 小时 soak test:无 goroutine 泄漏、内存稳定、调度公平
 
-### v1.x 🐛 Backlog(已知 + 计划修复)
+### v1.x  Backlog(已知 + 计划修复)
 
 - [ ] **config `Timeout` 字段加默认值兜底**——漏配置时 ctx 立刻过期 bug
 - [ ] **`ClassifyNetErr` 真实包装链集成测试**——用 `httptest` 触发真实 dial 失败,覆盖 mock 漏掉的路径
@@ -296,13 +296,13 @@ scrape_configs:
 - [ ] **config 加载时 URL schema 校验**——type=http 校验 http/https 前缀,type=tcp 校验 host:port;否则配错时 latency=0s 看起来像服务挂,实际是配置错
 - [ ] **fsnotify watcher 改为监听父目录**——当前监听文件本身,在 vim / VSCode 等 atomic save 编辑器下首次保存后 watcher 失效;改为监听父目录 + filter base name 可解决
 
-### v2 🚧 In Progress
+### v2  In Progress
 
 - [x] **config 热加载(fsnotify)** — debounce 防抖 + 优雅降级 + reload 不停机切换
 - [ ] **告警规则引擎** — 基于 `error_type` + 阈值触发 webhook / 邮件,复用 v1 已有的错误分桶维度
 - [ ] **多实例部署 + etcd 协调** — 避免重复探测,主备切换
 
-### v3 🔮 长期
+### v3  长期
 
 - [ ] K8s 集成:从 Service / Endpoints 自动发现 target
 - [ ] 接入 OpenTelemetry,支持分布式追踪
