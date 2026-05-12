@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jiayu113/gowatch/internal/alert"
 	"github.com/jiayu113/gowatch/internal/checker"
 	"github.com/jiayu113/gowatch/internal/config"
 	"github.com/jiayu113/gowatch/internal/metrics"
@@ -14,13 +15,14 @@ import (
 
 // Pool 是检测调度器
 type Pool struct {
-	store    *storage.Store
-	mu       sync.RWMutex
-	targets  []config.Target
-	workers  int
-	interval time.Duration
-	checkers map[string]checker.Checker // target 名 -> 对应的 Checker 实例
-	reloadCh chan *config.Config
+	store     *storage.Store
+	mu        sync.RWMutex
+	targets   []config.Target
+	workers   int
+	interval  time.Duration
+	checkers  map[string]checker.Checker // target 名 -> 对应的 Checker 实例
+	reloadCh  chan *config.Config
+	evaluator *alert.Evaluator
 }
 
 func NewPool(store *storage.Store, cfg *config.Config, workers int, interval time.Duration) *Pool {
@@ -32,6 +34,10 @@ func NewPool(store *storage.Store, cfg *config.Config, workers int, interval tim
 	}
 	p.applyConfig(cfg)
 	return p
+}
+
+func (p *Pool) SetEvaluator(e *alert.Evaluator) {
+	p.evaluator = e
 }
 
 // applyConfig 写入 targets + checkers,加锁
@@ -85,6 +91,9 @@ func (p *Pool) Run(ctx context.Context) {
 		for r := range results {
 			if err := p.store.Save(r); err != nil {
 				log.Printf("scheduler: save failed:%v", err)
+			}
+			if p.evaluator != nil {
+				p.evaluator.OnResult(r)
 			}
 		}
 	}()

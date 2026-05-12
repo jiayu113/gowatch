@@ -1,0 +1,24 @@
+rules:
+  - name: github-flapping
+    target: github-home
+    type: consecutive_status
+    status: down
+    threshold: 3
+    cooldowm: 5m
+    webhook: http://localhost:9999/test-webhook
+
+  - name: dns-broken
+    target: "*"
+    type: consecutive_error_type
+    error_type: dns
+    threshold: 2
+    cooldown: 10m
+    webhook: http://localhost:9999/test-webhook
+
+  - name: high-error-rate
+    target: "*"
+    type: error_rate_window
+    threshold: 50
+    window: 5m
+    cooldown: 10m
+    webhook: http://localhost:9999/test-webhook

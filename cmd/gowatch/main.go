@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jiayu113/gowatch/internal/alert"
 	"github.com/jiayu113/gowatch/internal/api"
 	"github.com/jiayu113/gowatch/internal/checker"
 	"github.com/jiayu113/gowatch/internal/config"
@@ -86,12 +87,20 @@ func main() {
 		log.Fatalf("加载配置失败: %v", err)
 	}
 
+	alertCfg, err := alert.LoadFromFile("alerts.yaml")
+	if err != nil {
+		log.Printf("alert: load failed, alerting disabled: %v", err)
+		alertCfg = &alert.Config{}
+	}
+	evaluator := alert.NewEvaluator(alertCfg.Rules, nil)
+
 	// 监听SIGINT/SIGTERM的ctx
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// 启动scheduler，用done channel等它真的退出
 	pool := scheduler.NewPool(store, cfg, 5, 10*time.Second)
+	pool.SetEvaluator(evaluator)
 	poolDone := make(chan struct{})
 	go func() {
 		pool.Run(ctx)
