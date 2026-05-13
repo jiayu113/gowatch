@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jiayu113/gowatch/internal/alert"
 	"github.com/jiayu113/gowatch/internal/checker"
 	_ "modernc.org/sqlite"
 )
@@ -40,6 +41,26 @@ func New(path string) (*Store, error) {
 
 	// 加一个索引加速按 target 查询
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_checks_target ON checks(target)`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+	CREATE TABLE IF NOT EXISTS alerts(
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	rule_name TEXT NOT NULL,
+	target TEXT NOT NULL,
+	reason TEXT,
+	fired_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)
+	`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_alerts_target ON alerts(target)`)
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -180,4 +201,33 @@ func (s *Store) GetLatestPerTarget() ([]checker.Result, error) {
 // Close 关闭数据库连接。
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// 写告警
+func (s *Store) SaveAlert(ev alert.Event) error {
+	_, err := s.db.Exec(
+		`INSERT INTO alerts (rule_name,target,reason,fired_at) VALUES (?,?,?,?)`,
+		ev.RuleName, ev.Target, ev.Reason, ev.FireAt,
+	)
+	return err
+}
+
+// 读告警
+func (s *Store) GetRecentAlerts(n int) ([]alert.Event, error) {
+	rows, err := s.db.Query(
+		`SELECT rule_name,target,reason,fired_at FROM alerts ORDER BY fired_at DESC LIMIT ?`, n,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []alert.Event
+	for rows.Next() {
+		var ev alert.Event
+		if err := rows.Scan(&ev.RuleName, &ev.Target, &ev.Reason, &ev.FireAt); err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
 }

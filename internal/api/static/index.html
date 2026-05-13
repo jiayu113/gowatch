@@ -17,6 +17,7 @@
 <body>
     <h1>🛰️ GoWatch</h1>
     <div id="meta">上次刷新: <span id="time">-</span></div>
+    
     <table>
         <thead>
             <tr>
@@ -30,7 +31,21 @@
         <tbody id="body"></tbody>
     </table>
 
+    <h2 style="color:#ffb74d;margin-top:30px;">🚨 最近告警</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>时间</th>
+                <th>规则</th>
+                <th>目标</th>
+                <th>原因</th>
+            </tr>
+        </thead>
+        <tbody id="alerts-body"></tbody>
+    </table>
+
 <script>
+// 1. 刷新“当前状态”的函数
 async function refresh() {
     try {
         const resp = await fetch('/api/status');
@@ -54,8 +69,40 @@ async function refresh() {
         console.error(e);
     }
 }
+
+// 2. 新增：刷新“最近告警”的函数
+async function refreshAlerts() {
+    try {
+        const resp = await fetch('/api/alerts?limit=20');
+        const data = await resp.json();
+        const tbody = document.getElementById('alerts-body');
+        tbody.innerHTML = '';
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="color:#888;">暂无告警</td></tr>';
+            return;
+        }
+        for (const e of data) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${new Date(e.fired_at).toLocaleString()}</td>
+                <td>${e.rule_name}</td>
+                <td>${e.target}</td>
+                <td>${e.reason || '-'}</td>
+            `;
+            tbody.appendChild(tr);
+        }
+    } catch (e) { 
+        console.error(e); 
+    }
+}
+
+// 3. 页面刚打开时，立刻执行一次请求
 refresh();
-setInterval(refresh, 5000); // 每 5 秒刷新
+refreshAlerts();
+
+// 4. 之后每隔 5 秒钟，两个表格都会自动向后台请求新数据并刷新
+setInterval(refresh, 5000);
+setInterval(refreshAlerts, 5000);
 </script>
 </body>
 </html>

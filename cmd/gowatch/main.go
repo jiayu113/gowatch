@@ -92,7 +92,16 @@ func main() {
 		log.Printf("alert: load failed, alerting disabled: %v", err)
 		alertCfg = &alert.Config{}
 	}
-	evaluator := alert.NewEvaluator(alertCfg.Rules, nil)
+
+	emitCh := make(chan alert.Event, 100)
+	evaluator := alert.NewEvaluator(alertCfg.Rules, emitCh)
+	go func() {
+		for ev := range emitCh {
+			if err := store.SaveAlert(ev); err != nil {
+				log.Printf("alert: save failed: %v", err)
+			}
+		}
+	}()
 
 	// 监听SIGINT/SIGTERM的ctx
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

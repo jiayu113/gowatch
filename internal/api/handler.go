@@ -63,6 +63,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("/api/health", h.Health)
 	mux.HandleFunc("/api/status", h.Status)
 	mux.HandleFunc("/api/history", h.History)
+	mux.HandleFunc("/api/alerts", h.Alerts)
 
 	// 访问/metrics时会自动把所有注册的metric序列化成Prometheus能抓取的文本格式输出出来
 	mux.Handle("/metrics", promhttp.Handler())
@@ -138,4 +139,24 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Printf("json encode error: %v", err)
 	}
+}
+
+func (h *Handler) Alerts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 50
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+	events, err := h.store.GetRecentAlerts(limit)
+	if err != nil {
+		log.Printf("GetRecentAlerts error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, events)
 }
