@@ -4,7 +4,7 @@ rules:
     type: consecutive_status
     status: down
     threshold: 3
-    cooldowm: 5m
+    cooldown: 5m
     webhook: http://localhost:9999/test-webhook
 
   - name: dns-broken
