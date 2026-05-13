@@ -3,7 +3,6 @@
 > 用 Go 写的轻量探活监控服务 —— 配置驱动、并发探测、错误分类、SQLite 持久化、HTTP API、Web 面板、Prometheus 指标、**告警规则引擎**。单二进制、无 CGO、跨平台。
 
 ![Web 面板截图](image-2.png)
-![Prometheus 指标截图](image-1.png)
 
 GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查，把结果按**错误类型**分桶并写入 SQLite，通过 HTTP API + Web UI + Prometheus `/metrics` 端点暴露。**v2 引入告警规则引擎**：基于 v1 已有的 `error_type` 维度做多种语义的规则匹配，命中后走 webhook 通知并落库。整个服务是常驻进程，支持优雅关闭，可以放心 Ctrl+C 或 SIGTERM。
 
