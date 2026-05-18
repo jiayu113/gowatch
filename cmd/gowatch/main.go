@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jiayu113/gowatch/internal/alert"
 	"github.com/jiayu113/gowatch/internal/api"
 	"github.com/jiayu113/gowatch/internal/checker"
+	"github.com/jiayu113/gowatch/internal/cluster"
 	"github.com/jiayu113/gowatch/internal/config"
 	"github.com/jiayu113/gowatch/internal/scheduler"
 	"github.com/jiayu113/gowatch/internal/storage"
@@ -29,7 +31,23 @@ func main() {
 	queryLimit := flag.Int("limit", 20, "查询返回条数")
 	queryLatest := flag.Bool("latest", false, "查询每个target的最新状态")
 	servePort := flag.String("port", ":8080", "HTTP服务监听端口")
+	clusterMode := flag.Bool("cluster", false, "启用多实例集群模式(需要 --etcd)")
+	etcdEndpoints := flag.String("etcd", "", "etcd endpoints,逗号分隔 e.g.localhost:2379")
+	nodeID := flag.String("node-id", "", "本实例的node ID, 默认用hostname")
 	flag.Parse()
+
+	if *clusterMode {
+		if *etcdEndpoints == "" {
+			log.Fatal("--cluster 启用时必须指定 --etcd")
+		}
+		if *nodeID == "" {
+			h, err := os.Hostname()
+			if err != nil {
+				log.Fatalf("获取hostname失败:%v", err)
+			}
+			*nodeID = h
+		}
+	}
 
 	store, err := storage.New(*dbPath)
 	if err != nil {
@@ -111,10 +129,29 @@ func main() {
 	pool := scheduler.NewPool(store, cfg, 5, 10*time.Second)
 	pool.SetEvaluator(evaluator)
 	poolDone := make(chan struct{})
-	go func() {
-		pool.Run(ctx)
-		close(poolDone)
-	}()
+	if *clusterMode {
+		// 集群模式: leader.Run 包裹 pool.Run
+		endpoints := strings.Split(*etcdEndpoints, ",")
+		clusterCil, err := cluster.NewClient(ctx, cluster.Config{Endpoints: endpoints})
+		if err != nil {
+			log.Fatalf("cluster: %v", err)
+		}
+		defer clusterCil.Close()
+		ldr := cluster.NewLeader(clusterCil, *nodeID, cluster.Config{Endpoints: endpoints})
+		go func() {
+			// ldr.Run 会阻塞，直到拿到 Leader 权限才会执行 pool.Run
+			if err := ldr.Run(ctx, pool.Run); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("cluster: leader exited:%v", err)
+			}
+			close(poolDone)
+		}()
+	} else {
+		// 单机模式
+		go func() {
+			pool.Run(ctx)
+			close(poolDone)
+		}()
+	}
 
 	// 启动 config watcher（可选，watcher 起不来不影响主流程）
 	reloadCh := make(chan *config.Config, 1)
@@ -136,8 +173,12 @@ func main() {
 
 	// 启动HTTP server，goroutine不阻塞
 	handler := api.NewHandler(store)
+	actualPort := *servePort
+	if !strings.Contains(actualPort, ":") {
+		actualPort = ":" + actualPort
+	}
 	server := &http.Server{
-		Addr:    *servePort,
+		Addr:    actualPort,
 		Handler: handler.Routes(),
 	}
 	go func() {
@@ -159,7 +200,7 @@ func main() {
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP shutdown error：%v", err)
+		log.Printf("HTTP shutdown error: %v", err)
 	}
 	log.Println("HTTP server 已关闭")
 
