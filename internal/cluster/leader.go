@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"log"
+	"sync/atomic"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -40,10 +41,18 @@ type Leader struct {
 	cli    *clientv3.Client
 	nodeID string
 	cfg    Config
+
+	// 仅供测试：暴露当前持有的 Session, 测试可以 Revoke 它的 Lease 来模拟 session 死掉
+	curSess atomic.Pointer[concurrency.Session]
 }
 
 func NewLeader(cli *clientv3.Client, nodeID string, cfg Config) *Leader {
 	return &Leader{cli: cli, nodeID: nodeID, cfg: cfg}
+}
+
+// currentSession 仅供测试用, 返回 nil 表示当前未持有 session
+func (l *Leader) currentSession() *concurrency.Session {
+	return l.curSess.Load()
 }
 
 // Run 阻塞直到 ctx 取消
@@ -59,11 +68,13 @@ func (l *Leader) Run(ctx context.Context, onLeader func(context.Context)) error 
 			bo.Wait(ctx)
 			continue
 		}
+		l.curSess.Store(sess) // 仅供测试用, session 成功创建了才存, 现在有个 session 在手
 		e := concurrency.NewElection(sess, electionPrefix)
 		// 阻塞直到上位或 ctx 取消
 		log.Printf("cluster: campaigning as %s", l.nodeID)
 		if err := e.Campaign(ctx, l.nodeID); err != nil {
 			sess.Close()
+			l.curSess.Store(nil) // 仅供测试用, session 还没上位就失败了, 现在没有 session 在手
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -95,6 +106,7 @@ func (l *Leader) Run(ctx context.Context, onLeader func(context.Context)) error 
 		case <-time.After(5 * time.Second):
 			log.Println("cluster: scheduler exit TIMEOUT")
 		}
+		l.curSess.Store(nil) // 仅供测试用, session 失效后清除
 		sess.Close()
 		if ctx.Err() != nil {
 			return ctx.Err()
