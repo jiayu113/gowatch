@@ -170,14 +170,14 @@ func (s *Store) SaveBatch(results []checker.Result) error {
 // GetLatestPerTarget 返回每个 target 的最新一条记录。
 func (s *Store) GetLatestPerTarget() ([]checker.Result, error) {
 	query := `
-	SELECT c.target,c.status,c.latency_ms,c.error,c.ts
+	SELECT c.target, c.status, c.latency_ms, c.error, c.ts
 	FROM checks c
-	INNER JOIN(
-	SELECT target ,MAX(ts) AS max_ts
-	FROM checks
-	GROUP BY target
-	) latest ON c.target=latest.target AND c.ts=latest.max_ts
-	 ORDER BY c.target
+	INNER JOIN (
+		SELECT target, MAX(id) AS max_id
+		FROM checks
+		GROUP BY target
+	) latest ON c.id = latest.max_id
+	ORDER BY c.target
 	`
 	rows, err := s.db.Query(query)
 	if err != nil {
