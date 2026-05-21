@@ -18,6 +18,7 @@ import (
 	"github.com/jiayu113/gowatch/internal/checker"
 	"github.com/jiayu113/gowatch/internal/cluster"
 	"github.com/jiayu113/gowatch/internal/config"
+	"github.com/jiayu113/gowatch/internal/metrics"
 	"github.com/jiayu113/gowatch/internal/scheduler"
 	"github.com/jiayu113/gowatch/internal/storage"
 )
@@ -129,6 +130,7 @@ func main() {
 	pool := scheduler.NewPool(store, cfg, 5, 10*time.Second)
 	pool.SetEvaluator(evaluator)
 	poolDone := make(chan struct{})
+	var leaderState cluster.LeaderState
 	if *clusterMode {
 		// 集群模式: leader.Run 包裹 pool.Run
 		endpoints := strings.Split(*etcdEndpoints, ",")
@@ -138,6 +140,7 @@ func main() {
 		}
 		defer clusterCil.Close()
 		ldr := cluster.NewLeader(clusterCil, *nodeID, cluster.Config{Endpoints: endpoints})
+		leaderState = ldr
 		go func() {
 			// ldr.Run 会阻塞，直到拿到 Leader 权限才会执行 pool.Run
 			if err := ldr.Run(ctx, pool.Run); err != nil && !errors.Is(err, context.Canceled) {
@@ -147,6 +150,8 @@ func main() {
 		}()
 	} else {
 		// 单机模式
+		leaderState = cluster.NewSingleLeader(*nodeID)
+		metrics.IsLeader.Set(1) // 单机模式恒为 leader
 		go func() {
 			pool.Run(ctx)
 			close(poolDone)
@@ -172,7 +177,7 @@ func main() {
 	}
 
 	// 启动HTTP server，goroutine不阻塞
-	handler := api.NewHandler(store)
+	handler := api.NewHandler(store, leaderState)
 	actualPort := *servePort
 	if !strings.Contains(actualPort, ":") {
 		actualPort = ":" + actualPort

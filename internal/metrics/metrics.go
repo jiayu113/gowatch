@@ -42,6 +42,14 @@ var (
 		},
 		[]string{"target", "error_type"},
 	)
+
+	// IsLeader 标记当前实例是否是 leader(单机模式恒为 1)
+	IsLeader = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "gowatch_is_leader",
+			Help: "1 if this node is leader, 0 otherwise",
+		},
+	)
 )
 
 func Record(target, status, errType string, latencySeconds float64, hasError bool) {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jiayu113/gowatch/internal/checker"
+	"github.com/jiayu113/gowatch/internal/cluster"
 	"github.com/jiayu113/gowatch/internal/storage"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -22,6 +23,26 @@ type ResultDTO struct {
 	LatencyMs float64   `json:"latency_ms"`
 	Error     string    `json:"error"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+type ClusterStatusDTO struct {
+	Mode     string `json:"mode"`      // cluster or single
+	NodeID   string `json:"node_id"`   // 当前节点 ID
+	IsLeader bool   `json:"is_leader"` // 是否是 leader
+	Uptime   string `json:"uptime"`    // 服务启动时间
+}
+
+func (h *Handler) ClusterStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, ClusterStatusDTO{
+		Mode:     h.leaderState.Mode(),
+		NodeID:   h.leaderState.NodeID(),
+		IsLeader: h.leaderState.IsLeader(),
+		Uptime:   time.Since(h.startedAt).String(),
+	})
 }
 
 func toDTO(r checker.Result) ResultDTO {
@@ -45,14 +66,16 @@ func toDTOs(results []checker.Result) []ResultDTO {
 // Handler 是所有 HTTP 处理器的聚合。
 // 持有 store 的引用，这样 handler 就能读数据库。
 type Handler struct {
-	store     *storage.Store
-	startedAt time.Time // 服务启动时间，用于计算 uptime
+	store       *storage.Store
+	leaderState cluster.LeaderState
+	startedAt   time.Time // 服务启动时间，用于计算
 }
 
-func NewHandler(store *storage.Store) *Handler {
+func NewHandler(store *storage.Store, state cluster.LeaderState) *Handler {
 	return &Handler{
-		store:     store,
-		startedAt: time.Now(),
+		store:       store,
+		leaderState: state,
+		startedAt:   time.Now(),
 	}
 }
 
@@ -64,6 +87,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("/api/status", h.Status)
 	mux.HandleFunc("/api/history", h.History)
 	mux.HandleFunc("/api/alerts", h.Alerts)
+	mux.HandleFunc("/api/cluster/status", h.ClusterStatus)
 
 	// 访问/metrics时会自动把所有注册的metric序列化成Prometheus能抓取的文本格式输出出来
 	mux.Handle("/metrics", promhttp.Handler())

@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jiayu113/gowatch/internal/metrics"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
@@ -38,9 +39,10 @@ func (b *backoff) Reset() {
 
 // Leader 封装 etcd Election 逻辑, 对 scheduler 透明
 type Leader struct {
-	cli    *clientv3.Client
-	nodeID string
-	cfg    Config
+	cli      *clientv3.Client
+	nodeID   string
+	cfg      Config
+	isLeader atomic.Bool // 记住自己是不是 leader, 供 IsLeader() 快速返回用, 不需要每次都访问 etcd
 
 	// 仅供测试：暴露当前持有的 Session, 测试可以 Revoke 它的 Lease 来模拟 session 死掉
 	curSess atomic.Pointer[concurrency.Session]
@@ -48,6 +50,17 @@ type Leader struct {
 
 func NewLeader(cli *clientv3.Client, nodeID string, cfg Config) *Leader {
 	return &Leader{cli: cli, nodeID: nodeID, cfg: cfg}
+}
+
+func (l *Leader) IsLeader() bool {
+	return l.isLeader.Load()
+}
+
+func (l *Leader) NodeID() string {
+	return l.nodeID
+}
+func (l *Leader) Mode() string {
+	return "cluster"
 }
 
 // currentSession 仅供测试用, 返回 nil 表示当前未持有 session
@@ -84,6 +97,8 @@ func (l *Leader) Run(ctx context.Context, onLeader func(context.Context)) error 
 		}
 		// 上位
 		log.Printf("cluster: !!!ELECTED AS LEADER (node=%s)!!!", l.nodeID)
+		l.isLeader.Store(true)  // 记住自己是 leader 了
+		metrics.IsLeader.Set(1) // 更新 metrics
 
 		leaderCtx, cancel := context.WithCancel(ctx)
 		done := make(chan struct{})
@@ -106,7 +121,9 @@ func (l *Leader) Run(ctx context.Context, onLeader func(context.Context)) error 
 		case <-time.After(5 * time.Second):
 			log.Println("cluster: scheduler exit TIMEOUT")
 		}
-		l.curSess.Store(nil) // 仅供测试用, session 失效后清除
+		l.isLeader.Store(false) // 记住自己不再是 leader 了
+		metrics.IsLeader.Set(0) // 更新 metrics
+		l.curSess.Store(nil)    // 仅供测试用, session 失效后清除
 		sess.Close()
 		if ctx.Err() != nil {
 			return ctx.Err()
