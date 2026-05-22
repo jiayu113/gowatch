@@ -139,12 +139,24 @@ func main() {
 			log.Fatalf("cluster: %v", err)
 		}
 		defer clusterCil.Close()
+
+		evaluator := alert.NewEvaluator(alertCfg.Rules, emitCh, alert.WithEtcdClient(clusterCil))
+		pool.SetEvaluator(evaluator)
+
 		ldr := cluster.NewLeader(clusterCil, *nodeID, cluster.Config{Endpoints: endpoints})
 		leaderState = ldr
+
 		go func() {
-			// ldr.Run 会阻塞，直到拿到 Leader 权限才会执行 pool.Run
-			if err := ldr.Run(ctx, pool.Run); err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("cluster: leader exited:%v", err)
+			wrappedOnLeader := func(leaderCtx context.Context) {
+				loadCtx, cancel := context.WithTimeout(leaderCtx, 5*time.Second)
+				if err := evaluator.LoadSuppressorFromEtcd(loadCtx, clusterCil); err != nil {
+					log.Printf("alert: load suppressor from etcd failed: %v", err)
+				}
+				cancel()
+				pool.Run(leaderCtx)
+			}
+			if err := ldr.Run(ctx, wrappedOnLeader); err != nil && !errors.Is(err, context.Canceled) {
+				log.Fatalf("cluster: leader exited: %v", err)
 			}
 			close(poolDone)
 		}()
@@ -152,6 +164,10 @@ func main() {
 		// 单机模式
 		leaderState = cluster.NewSingleLeader(*nodeID)
 		metrics.IsLeader.Set(1) // 单机模式恒为 leader
+
+		evaluator := alert.NewEvaluator(alertCfg.Rules, emitCh)
+		pool.SetEvaluator(evaluator)
+
 		go func() {
 			pool.Run(ctx)
 			close(poolDone)
