@@ -84,9 +84,9 @@ func NewHandler(store *storage.Store, state cluster.LeaderState) *Handler {
 func (h *Handler) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", h.Health)
-	mux.HandleFunc("/api/status", h.Status)
-	mux.HandleFunc("/api/history", h.History)
-	mux.HandleFunc("/api/alerts", h.Alerts)
+	mux.HandleFunc("/api/status", RequireLeader(h.leaderState, h.Status))
+	mux.HandleFunc("/api/history", RequireLeader(h.leaderState, h.History))
+	mux.HandleFunc("/api/alerts", RequireLeader(h.leaderState, h.Alerts))
 	mux.HandleFunc("/api/cluster/status", h.ClusterStatus)
 
 	// 访问/metrics时会自动把所有注册的metric序列化成Prometheus能抓取的文本格式输出出来
