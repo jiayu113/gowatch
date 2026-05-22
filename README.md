@@ -1,10 +1,10 @@
 # GoWatch
 
-> 用 Go 写的轻量探活监控服务 —— 配置驱动、并发探测、错误分类、SQLite 持久化、HTTP API、Web 面板、Prometheus 指标、告警规则引擎、**多实例 active-standby**。单二进制、无 CGO、跨平台。
+> 用 Go 写的轻量探活监控服务 —— 配置驱动、并发探测、错误分类、SQLite 持久化、HTTP API、Web 面板、Prometheus 指标、告警规则引擎、**多实例 active-standby(集群状态对外可见)**。单二进制、无 CGO、跨平台。
 
 ![Web 面板截图](image-2.png)
 
-GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果按**错误类型**分桶并写入 SQLite,通过 HTTP API + Web UI + Prometheus `/metrics` 端点暴露,命中告警规则后走 webhook 通知并落库。**v2 引入多实例部署**:通过 etcd 协调实现 active-standby 选主,任意时刻只有一个实例在跑 scheduler,Leader 失效后 follower 自动接管;**单机模式 100% 向后兼容(不开 `--cluster` flag 时行为与之前完全一致)**。整个服务是常驻进程,支持优雅关闭,可以放心 Ctrl+C 或 SIGTERM。
+GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果按**错误类型**分桶并写入 SQLite,通过 HTTP API + Web UI + Prometheus `/metrics` 端点暴露,命中告警规则后走 webhook 通知并落库。**v2 引入多实例部署**:通过 etcd 协调实现 active-standby 选主,任意时刻只有一个实例在跑 scheduler,Leader 失效后 follower 自动接管;集群身份对 Prometheus(`gowatch_is_leader`)、HTTP API(`/api/cluster/status`)和上游负载均衡(follower 数据接口返回 `503` + 角色 header)**都可见**;告警抑制状态通过 etcd 跨重启 / 跨 leader 切换对齐。**单机模式 100% 向后兼容(不开 `--cluster` flag 时行为与之前完全一致)**。整个服务是常驻进程,支持优雅关闭,可以放心 Ctrl+C 或 SIGTERM。
 
 ---
 
@@ -13,11 +13,12 @@ GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果按**错
 - **多协议健康检查** — HTTP(S) 状态码 / TCP 端口连通性,通过 `Checker` 接口扩展
 - **并发 Worker Pool 调度** — 固定 worker + Ticker 周期触发 + collector 解耦写库
 - **错误分类(`error_type`)** — 把网络层错误归类为 `timeout` / `refused` / `dns` / `non_2xx` / `other`,Prometheus 指标按错误类型分桶,**让告警规则能区分"网络抖动"和"服务挂了"**
-- **告警规则引擎** — 三种语义的规则匹配 + cooldown 抑制(支持 etcd 跨重启持久化)+ webhook 通知 + 持久化,**异步发起、永不阻塞探测主链路**
-- **多实例 active-standby(v2 新增)** — `internal/cluster` 包封装 etcd Election,**Leader 跑 scheduler,follower 阻塞在 Campaign,session 失效后自动重新参选**;scheduler 对 cluster 层完全透明,单机模式不开 `--cluster` 完全向后兼容
+- **告警规则引擎** — 三种语义的规则匹配 + cooldown 抑制 + webhook 通知(带重试)+ SQLite 持久化;**抑制状态通过 etcd 跨重启 / 跨 leader 对齐(已接入主评估链路)**,`OnResult` 永不阻塞探测主链路
+- **多实例 active-standby(v2)** — `internal/cluster` 包封装 etcd Election,**Leader 跑 scheduler,follower 阻塞在 Campaign,session 失效后自动重新参选**;**集群身份对外可见**:`gowatch_is_leader` 指标 + `/api/cluster/status` 端点 + follower 数据接口返回 `503` 并带 `X-GoWatch-Role` 头;scheduler 对 cluster 层完全透明,单机模式不开 `--cluster` 完全向后兼容
+- **`LeaderState` 统一抽象** — 单机模式用 always-leader 的 `SingleLeader`,集群模式由 `cluster.Leader` 实现同一接口;API 层 / metric 层 / middleware 都只依赖这个接口,**两条装配路径不散落 if 分支**
 - **SQLite 持久化** — 纯 Go 驱动 (`modernc.org/sqlite`),无 CGO,跨平台编译零负担
-- **REST API + Web UI** — 实时状态、按 target 查历史、最近告警列表,前端 5 秒自动刷新
-- **Prometheus 集成** — `/metrics` 端点暴露 counter / histogram / gauge,可直接接 Grafana
+- **REST API + Web UI** — 实时状态、按 target 查历史、最近告警列表、集群状态查询,前端 5 秒自动刷新
+- **Prometheus 集成** — `/metrics` 端点暴露 counter / histogram / gauge(含 `gowatch_is_leader`),可直接接 Grafana + Alertmanager
 - **Graceful Shutdown** — `signal.NotifyContext` + `server.Shutdown` + scheduler done channel 三步收尾,不丢数据;集群模式额外加 leader 优雅下台(取消 leaderCtx + 5s 超时兜底)
 - **配置热加载(fsnotify)** — 监听 config.yaml 变化,200ms debounce 防抖,下一轮 dispatch 切换到新 checker
 - **CLI 工具化** — 同一个二进制支持服务模式、查询历史、查看最新状态三种用法
@@ -64,37 +65,43 @@ scheduler 不变,外面套一层 cluster.Leader 来负责"谁跑"。Leader 用�
                 ┌─────────────────────────────┐
                 │           etcd              │
                 │  /gowatch/leader (election) │
+                │  /gowatch/suppressor/...    │
                 └──────────────┬──────────────┘
                                │
               ┌────────────────┴────────────────┐
               │                                 │
          Instance A                        Instance B
-   leader.Run(ctx, pool.Run)         leader.Run(ctx, pool.Run)
+   leader.Run(ctx, onLeader)         leader.Run(ctx, onLeader)
+   is_leader = 1                     is_leader = 0
+   /api/* 正常服务                    /api/status → 503 (follower)
               │                                 │
               ▼                                 ▼
          Election wins                   Blocked on Campaign
               │                                 │
               ▼                                 │
-     pool.Run(leaderCtx)                        │ wait...
+   LoadSuppressorFromEtcd                       │ wait...
+   pool.Run(leaderCtx)                          │
               │                                 │
               │ session.Done()                  │
               │ or ctx.Done()                   │
               ▼                                 ▼
          DEMOTE (cancel leaderCtx,     Election wins (≤15s)
          wait scheduler done ≤5s)              │
-              │                                 ▼
+         is_leader = 0                          ▼
+              │                       LoadSuppressorFromEtcd
               └─→ backoff → CAMPAIGN     pool.Run(leaderCtx)
-                  (1s→2s→...→30s)
+                  (1s→2s→...→30s)        is_leader = 1
 ```
 
 **关键设计:**
 
-- **回调式 API:`leader.Run(ctx, onLeader func(ctx))`** — cluster 对 scheduler 完全透明,scheduler 看到的只是"一个 ctx,跑就行,取消就退";没有 `IsLeader()` 这种状态查询,**避免了 TOCTOU 类竞态**(query → act 之间状态可能已变)
+- **回调式 API:`leader.Run(ctx, onLeader func(ctx))`** — cluster 对 scheduler 完全透明,scheduler 看到的只是"一个 ctx,跑就行,取消就退";上位时 `onLeader` 先 `LoadSuppressorFromEtcd` 回灌抑制状态,再 `pool.Run(leaderCtx)`
+- **`LeaderState` 接口统一身份查询** — `IsLeader()` 用 `atomic.Bool`,Run 里上位前置 1、下位后置 0;API 层 / middleware / metric 都读这个接口,单机模式由 `SingleLeader`(恒为 leader)实现,**避免到处写 `if clusterMode`**
 - **scheduler 100% 复用** — 同一份 `pool.Run(ctx)` 代码,单机模式直接调,集群模式被 `leader.Run` 包裹后调;集群上位 = leaderCtx 启动,session 失效 = leaderCtx 取消,scheduler 自然退出
 - **fail-fast on startup, backoff at runtime** — 启动期 etcd dial 失败直接报错(配置错应该让人看见);运行期 etcd 抖动用指数退避(1s → 2s → ... ≤ 30s),不让重连风暴打挂 etcd
 - **优雅下台 5s 上限** — session 失效或 ctx cancel 时,先取消 leaderCtx 让 scheduler 自己收尾;`select` 等 done channel,5s 后超时强退,**不让一个挂掉的 scheduler 阻塞自身退出**
 - **session TTL 默认 15s** — 心跳 / 5s,容忍 1-2 次丢包;权衡了"切换太快导致 false failover"和"切换太慢导致探测停摆"
-- **依赖外部监控** — 集群无 leader / split-brain 这种事 GoWatch 自己监控不到(自己就是被监控的对象),必须接 Alertmanager(详见下文"多实例部署")
+- **集群健康靠外部监控 + 自身 metric** — `gowatch_is_leader` 让 Alertmanager 能直接表达"无 leader"(`absent(gowatch_is_leader == 1)`)和"脑裂"(`sum(gowatch_is_leader) > 1`);但"集群整体挂掉"这种事 GoWatch 自己监控不到(自己就是被监控对象),仍必须接外部 Alertmanager(详见下文"多实例部署")
 
 ### 告警引擎链路
 
@@ -107,7 +114,7 @@ collector ──→ evaluator.OnResult(r)
                           if rule.Target != "*" && rule.Target != r.Target: continue
                           snap = window.Snapshot(r.Target)         // 独立副本,避免锁外修改
                           hit, reason = rule.Match(snap)
-                          if hit && suppressor.Allow(rule,target,cooldown):
+                          if hit && suppressor.AllowAndPersist(ctx, etcdCli, rule, target, cooldown):
                               go fire(rule, event)                 // 异步,不阻塞 collector
                                   ├─→ webhook POST(5s timeout, 5xx 重试 1 次, 4xx 不重试)
                                   └─→ emit ch → store.SaveAlert
@@ -115,10 +122,10 @@ collector ──→ evaluator.OnResult(r)
 
 **关键设计:**
 
-- **`OnResult` 永不阻塞主链路** — Window.Push 与 suppressor.Allow 是 ms 级内存操作;真正可能慢的 webhook 全部丢进 `go fire(...)`,网络抖动绝对不会拖死 collector
+- **`OnResult` 永不阻塞主链路** — Window.Push 与 suppressor 判断是 ms 级内存操作;真正可能慢的 webhook 全部丢进 `go fire(...)`,网络抖动绝对不会拖死 collector
 - **复用 v1 的 `error_type` 维度** — `consecutive_error_type` 规则可以做到"连续 2 次 dns 失败才告警",这是单纯 status 维度做不到的判断
 - **Suppressor 是 (rule, target) 二元 key** — 同一规则在不同 target 上的 cooldown 互相独立,一个 target 在抑制窗口内不会让别的 target 也被静默
-- **Suppressor 跨重启持久化(v2 新增)** — `AllowAndPersist` 异步写 etcd,`LoadFromEtcd` 启动时回灌内存状态;**重启或 leader 切换后,cooldown 不再清零**;`cli == nil` 时自动降级为纯内存,单机模式无侵入
+- **Suppressor 跨重启 / 跨 leader 持久化(已接入主链路)** — `OnResult` 统一调用 `AllowAndPersist`:命中并放行时**异步**写 etcd(`/gowatch/suppressor/<rule>:<target>` → JSON `{LastFiredAt}`,不阻塞探测);leader 上位时 `LoadFromEtcd` 把所有 (rule, target) 的最近触发时间回灌内存。**`etcdCli == nil`(单机模式 / 集群启动降级)时自动退回纯内存 `Allow`,无分支侵入**
 - **Window cap=50 ring buffer** — 满了从尾部裁剪,保证内存有上界;`Snapshot` 返回独立副本,有专门的 unit test 守住这个契约
 - **Webhook 重试策略** — 5xx 视为服务端临时故障,500ms 后重试 1 次;4xx 是客户端语义错误(URL 写错、payload 不合规),重试也没用,直接返回;网络错误按 5xx 处理
 - **emit channel buffer=100 + default drop** — `SaveAlert` 慢于产出时丢日志并 drop,不阻塞 fire goroutine
@@ -147,9 +154,9 @@ go run ./cmd/gowatch
 
 ```yaml
 targets:
-  - name: baidu-home
+  - name: example-home
     type: http
-    url: https://www.baidu.com
+    url: https://example.com
     timeout: 3s
 
   - name: local-mysql
@@ -209,6 +216,7 @@ rules:
 - 数据库写入 `./gowatch.db`(同一个库,checks 表 + alerts 表)
 - HTTP 服务监听 `:8080`
 - Worker 数 5,探测周期 10 秒
+- `gowatch_is_leader` 恒为 1(单机即 leader)
 - Ctrl+C / SIGTERM 优雅退出
 
 ### 命令行选项
@@ -224,14 +232,14 @@ rules:
 | `--latest` | `false` | 查询每个 target 的最新一条状态 |
 | `--cluster` | `false` | 启用多实例集群模式(需同时指定 `--etcd`) |
 | `--etcd` | `""` | etcd endpoints,逗号分隔,如 `etcd1:2379,etcd2:2379` |
-| `--node-id` | hostname | 本实例节点 ID,用作 election value 和日志标识 |
+| `--node-id` | hostname | 本实例节点 ID,用作 election value、`gowatch_is_leader` 区分和日志标识 |
 
 ```bash
 # 查最近 50 条历史
 ./gowatch --query --limit 50
 
-# 查 baidu-home 的最近 20 次记录
-./gowatch --query --target baidu-home
+# 查 example-home 的最近 20 次记录
+./gowatch --query --target example-home
 
 # 查每个 target 当前最新状态(命令行版的 /api/status)
 ./gowatch --latest
@@ -259,38 +267,58 @@ GoWatch 通过 etcd 协调实现 active-standby,**任意时刻只有一个实例
 
 ### 行为
 
-- **任意时刻只有一个 instance 在跑 scheduler** — follower 阻塞在 `Election.Campaign`,HTTP server 也是起着的(只是 scheduler 没在跑)
+- **任意时刻只有一个 instance 在跑 scheduler** — follower 阻塞在 `Election.Campaign`,HTTP server 也是起着的(只是 scheduler 没在跑,且数据接口返回 503)
 - **Leader 失效后 follower 在 ~15s 内自动接管** — TTL 15s + lease 心跳 / 5s,理论窗口 5-15s
 - **session 抖动自动恢复** — leader session 失效后会自动 demote 并重新参选,不需要人工介入
+- **抑制状态跨切换对齐** — 新 leader 上位时从 etcd 回灌 Suppressor 状态,cooldown 不在切换瞬间清零
 - **单机模式行为不变** — 不开 `--cluster` flag 时,代码路径与之前完全一致
 
-### 必备外部监控
+### follower 的 HTTP 行为
 
-GoWatch **自己是被监控对象,无法监控自己的集群健康**,生产部署必须接 Alertmanager:
+集群模式下,数据接口经 `RequireLeader` 中间件保护,**follower 不直接对外服务陈旧数据**:
+
+| 端点 | leader | follower |
+|------|--------|----------|
+| `/api/status`、`/api/history`、`/api/alerts` | 正常返回 | `503` + `X-GoWatch-Role: follower` + `X-GoWatch-Node-ID: <id>` |
+| `/api/cluster/status` | 正常 | 正常(用来查身份) |
+| `/api/health`、`/metrics` | 正常 | 正常 |
+
+上游负载均衡可以据此把读流量只打到 leader,或用 `/api/cluster/status` 主动发现当前 leader。
+
+### 接 Alertmanager(集群健康监控)
+
+GoWatch **自己是被监控对象,无法监控自己的集群整体宕机**,生产部署必须接 Alertmanager。有了 `gowatch_is_leader` 指标后,规则可以写得很直接:
 
 ```yaml
-# alertmanager rules
-- alert: GoWatchNoLeader
-  expr: absent(rate(gowatch_check_total[1m]) > 0)
-  for: 2m
-  annotations:
-    summary: "GoWatch 集群无 leader,探测已停止"
+groups:
+  - name: gowatch-cluster
+    rules:
+      - alert: GoWatchNoLeader
+        expr: absent(gowatch_is_leader == 1)
+        for: 1m
+        annotations:
+          summary: "GoWatch 集群无 leader(或全部实例宕机),探测可能已停止"
 
-- alert: GoWatchLeaderFlapping
-  expr: changes(process_start_time_seconds{job="gowatch"}[10m]) > 3
-  for: 5m
-  annotations:
-    summary: "GoWatch leader 可能频繁切换(10 分钟内重启 > 3 次)"
+      - alert: GoWatchSplitBrain
+        expr: sum(gowatch_is_leader) > 1
+        for: 30s
+        annotations:
+          summary: "GoWatch 出现多个 leader(疑似脑裂)"
+
+      - alert: GoWatchLeaderFlapping
+        expr: sum(changes(gowatch_is_leader[10m])) > 6
+        annotations:
+          summary: "GoWatch leader 在 10 分钟内频繁切换"
 ```
 
-> `gowatch_is_leader` gauge metric 在下个版本(v2.x)加入,届时可以用更直接的 `absent(gowatch_is_leader == 1)` 表达"无 leader",`sum(gowatch_is_leader) > 1` 表达 split-brain。
+> `gowatch_is_leader` 是不带 label 的 gauge,多实例靠 Prometheus 抓取时的 `instance` label 区分。`absent(gowatch_is_leader == 1)` 同时覆盖"实例都在但无 leader"和"实例全挂"两种情况。
 
 ### 已知 trade-off
 
-- **切换期间可能重复告警一次** — 老 leader 退位 + 新 leader 上位的窗口内,如果探测命中告警规则,两边都有可能发出。Suppressor 跨重启已通过 etcd 共享,但**跨 leader 实例的 cooldown 还没完全对齐**(等 Evaluator 主流程接通 etcd 后解决,见 v2.x backlog)
-- **切换后新 leader 的 SQLite 是空的** — `/api/history` 看不到上一任的数据,因为 SQLite 是 per-instance 的;接入共享存储(MySQL / TiDB)v3实现
+- **极端时序下切换期可能重复告警一次** — 抑制状态已通过 etcd 跨 leader 对齐(老 leader 触发即异步写 etcd,新 leader 上位 `LoadFromEtcd` 回灌)。残留窗口:老 leader 触发后、异步写 etcd 尚未落盘就宕机,新 leader 加载不到这一条,可能重复发一次。**这是有意取舍——异步写不阻塞探测主链路,代价是极端时序下偶发一次重复**
+- **切换后新 leader 的 SQLite 是空的** — `/api/history` 看不到上一任的数据,因为 SQLite 是 per-instance 的;接入共享存储(MySQL / TiDB)在 v3 实现
 - **etcd 全挂时无 leader** — GoWatch 的探测也会停下来,这就是为什么 `GoWatchNoLeader` 这条 Alertmanager 规则**不能省**
-- **API 层没有 follower 模式** — 当前 follower 的 HTTP server 也在跑、`/api/status` 也能返回数据,但数据是这个实例自己的 SQLite,可能很陈旧;v2.x 计划加 `/api/cluster/status` + follower 返回 503 + 自定义 header,让上游负载均衡能识别
+- **failover 窗口期(5-15s)探测有空档** — 这是 active-standby 架构的固有特性,不是 bug;真要消除需要 active-active + 任务分片,超出当前定位
 
 ---
 
@@ -306,12 +334,12 @@ GoWatch **自己是被监控对象,无法监控自己的集群健康**,生产部
 
 ### `GET /api/status`
 
-返回每个 target 的最新一条记录:
+返回每个 target 的最新一条记录(集群模式下 follower 返回 503):
 
 ```json
 [
   {
-    "target": "baidu-home",
+    "target": "example-home",
     "status": "up",
     "latency_ms": 144.797,
     "error": "",
@@ -322,11 +350,11 @@ GoWatch **自己是被监控对象,无法监控自己的集群健康**,生产部
 
 ### `GET /api/history?target=<name>&limit=<n>`
 
-返回指定 target 的历史记录(`limit` 默认 20、上限 1000,按时间倒序)。
+返回指定 target 的历史记录(`limit` 默认 20、上限 1000,按时间倒序;follower 返回 503)。
 
 ### `GET /api/alerts?limit=<n>`
 
-返回最近触发的告警事件(默认 50、上限 1000,按 `fired_at` 倒序):
+返回最近触发的告警事件(默认 50、上限 1000,按 `fired_at` 倒序;follower 返回 503):
 
 ```json
 [
@@ -338,6 +366,16 @@ GoWatch **自己是被监控对象,无法监控自己的集群健康**,生产部
   }
 ]
 ```
+
+### `GET /api/cluster/status`
+
+返回当前实例的集群身份(**follower 也能查**,不被 `RequireLeader` 拦截):
+
+```json
+{ "mode": "cluster", "node_id": "node-a", "is_leader": true, "uptime": "1h2m52s" }
+```
+
+单机模式下 `mode` 为 `standalone`,`is_leader` 恒为 `true`。
 
 ### `GET /metrics`
 
@@ -353,9 +391,8 @@ Prometheus 兼容的指标端点(详见下一节)。
 | `gowatch_check_errors_total` | counter | `target`, **`error_type`** | 累计错误次数,**按错误类型分桶** |
 | `gowatch_check_latency_seconds` | histogram | `target` | 检查耗时分布 |
 | `gowatch_target_up` | gauge | `target` | 当前是否 up(1=up, 0=down) |
+| `gowatch_is_leader` | gauge | (无) | 当前实例是否是 leader(1=leader, 0=follower);**单机模式恒为 1**,多实例靠抓取 `instance` label 区分 |
 | 标准 Go runtime 指标 | - | - | goroutine 数、heap、GC 等 |
-
-> 集群模式相关 metric(`gowatch_is_leader` 等)在 v2.x 加入,届时可基于它配 Alertmanager 集群健康告警。
 
 ---
 
@@ -406,18 +443,19 @@ window: 5m
 
 ```
 gowatch/
-├── cmd/gowatch/main.go          # 入口:flag、模式分派、生命周期管理、装配 evaluator + cluster
+├── cmd/gowatch/main.go          # 入口:flag、模式分派、生命周期管理、装配 evaluator + cluster + LeaderState
 ├── internal/
 │   ├── config/                  # YAML 配置加载 + fsnotify 热加载
 │   ├── checker/                 # Checker 接口 + HTTP/TCP 实现 + 错误分类
 │   ├── storage/                 # SQLite 封装(checks + alerts 两张表)
-│   ├── api/                     # HTTP Handler + Web UI(embed.FS)
+│   ├── api/                     # HTTP Handler + RequireLeader middleware + Web UI(embed.FS)
 │   ├── scheduler/               # Worker Pool + Ticker + Collector
-│   ├── metrics/                 # Prometheus 指标定义
+│   ├── metrics/                 # Prometheus 指标定义(含 gowatch_is_leader)
 │   ├── alert/                   # 告警引擎:rule / matchers / window /
 │   │                            #          suppressor(含 etcd 持久化)/
-│   │                            #          notifier / evaluator
-│   └── cluster/                 # etcd 选主:session / leader / backoff
+│   │                            #          notifier / evaluator(WithEtcdClient option)
+│   └── cluster/                 # etcd 选主:session / leader / backoff /
+│                                #          state(LeaderState + SingleLeader)
 ├── config.yaml                  # 探测目标配置示例
 ├── alerts.yaml                  # 告警规则配置示例
 ├── go.mod
@@ -432,12 +470,14 @@ go test -v ./internal/checker/   # checker 接口 + 错误分类
 go test -v ./internal/storage/   # SQLite(:memory: 模式)
 go test -v ./internal/alert/     # 规则匹配 + Window + Suppressor(含 etcd 持久化)+ Notifier + 集成 + 故障注入
 go test -v ./internal/cluster/   # embedded etcd + Campaign / Failover / SessionExpire / CtxCancel
+go test -v ./internal/api/       # RequireLeader middleware(leader 放行 / follower 503 + header)
 
 # 全量
 go test -v ./...
 
-# 带覆盖率
+# 带覆盖率 / 竞态检测
 go test -cover ./...
+go test -race ./...
 ```
 
 **`internal/cluster` 测试覆盖的重点(全部基于 `go.etcd.io/etcd/server/v3/embed` 内嵌 etcd,无需外部容器):**
@@ -457,6 +497,10 @@ go test -cover ./...
 - `integration_test.go` — 用 `httptest.Server` 模拟 webhook,跑完整 OnResult → fire → webhook 链路 + cooldown 抑制
 - `failure_test.go` — webhook 持续 5xx / 持续 timeout 时,**`OnResult` 主调用绝不被阻塞**(异步契约的回归测试)
 
+**`internal/api` 测试覆盖的重点:**
+
+- `middleware_test.go` — `RequireLeader` 在 leader 时放行、在 follower 时返回 503 并带 `X-GoWatch-Role` / `X-GoWatch-Node-ID` 头,用 `mockState` 解耦 cluster 依赖
+
 ### 接 Prometheus + Grafana(可选)
 
 `prometheus.yml` 加抓取配置:
@@ -471,6 +515,7 @@ scrape_configs:
 然后在 Grafana 里画:
 
 - `gowatch_target_up` — 当前每个 target 是否在线
+- `gowatch_is_leader` — 哪个实例当前是 leader(集群部署时)
 - `sum by (error_type) (rate(gowatch_check_errors_total[5m]))` — 错误类型分布
 - `histogram_quantile(0.99, rate(gowatch_check_latency_seconds_bucket[5m]))` — P99 延迟
 
@@ -491,14 +536,15 @@ scrape_configs:
 - [x] **config 热加载(fsnotify)** — debounce 防抖 + 优雅降级 + reload 不停机切换
 - [x] **告警规则引擎** — 三种规则语义 + Window + Suppressor + Webhook(含重试) + SQLite 持久化 + Web UI 展示
 - [x] **告警系统的异步契约** — `OnResult` 永不阻塞 collector,webhook 故障(5xx/timeout)有专门的回归测试守护
-- [x] **多实例 active-standby + etcd 选主** — `internal/cluster` 包,回调式 API,scheduler 对 cluster 透明;单机模式 100% 向后兼容;embedded etcd 4 场景单元测试(Campaign / Failover / SessionExpire / CtxCancel);fail-fast 启动 + 运行期指数退避 + 优雅下台 5s 兜底
+- [x] **多实例 active-standby + etcd 选主** — `internal/cluster` 包,回调式 API,scheduler 对 cluster 透明;单机模式 100% 向后兼容;embedded etcd 多场景单元测试(Campaign / Failover / SessionExpire / CtxCancel);fail-fast 启动 + 运行期指数退避 + 优雅下台 5s 兜底
 - [x] **Suppressor 跨重启持久化** — etcd 后端(`AllowAndPersist` / `LoadFromEtcd`),异步写入不阻塞主链路;`cli == nil` 时自动降级为纯内存(单机模式无侵入);`PersistAndLoad` 单元测试覆盖
+- [x] **集群状态对外可见(第四刀延伸)** — `gowatch_is_leader` 指标 + `/api/cluster/status` 端点 + `RequireLeader` 中间件(follower 数据接口 503 + 角色 header);`LeaderState` 接口统一单机/集群两条装配路径,middleware 单测覆盖 leader 放行 / follower 503
+- [x] **告警抑制接入主评估链路** — `NewEvaluator` 支持 `WithEtcdClient` functional option,`OnResult` 统一走 `AllowAndPersist`(单机 nil-safe 降级),leader 上位时 `LoadSuppressorFromEtcd` 回灌,**跨重启 / 跨 leader cooldown 真正对齐**
 
-### v2.x — Backlog(已知 + 计划修复)
+### v2.x — Backlog(计划中 + 已知待修复)
 
-- [ ] **Evaluator 主流程接通 etcd Suppressor 持久化** — Suppressor 层 API 已完成,等待 `NewEvaluator` 接受 etcd client 参数后默认启用,跨实例 cooldown 才能真正对齐
-- [ ] **API 层 follower 模式 + `gowatch_is_leader` metric + `/api/cluster/status`** — 让"集群感知"对外可见,follower 返回 503 + 自定义 header 标识身份,上游 LB 才能正确路由
-- [ ] **dockertest e2e** — 起真实 etcd 容器跑端到端 leader 切换,补 embedded etcd 测不到的网络层场景(网络分区 / 慢链接)
+- [ ] **dockertest e2e** — 起真实 etcd 容器跑端到端 leader 切换 + 网络分区,补 embedded etcd 测不到的网络层场景(分区 / 慢链接);用 build tag 隔离,不污染默认测试套件
+- [ ] **SSL / TLS 证书过期监控** — 新增 `cert` 检查类型(TLS 握手读叶子证书 `NotAfter`)+ `gowatch_ssl_cert_expiry_days` 指标 + 到期天数预警,补齐 HTTP / TCP / SSL 三类监控
 - [ ] **`alerts.yaml` 热加载** — 复用 config watcher 的 debounce 思路,告警规则也支持运行时修改
 - [ ] **`fsnotify` watcher 改为监听父目录** — 当前监听文件本身,在 vim / VSCode 等 atomic save 编辑器下首次保存后 watcher 失效;改为监听父目录 + filter base name 可解决
 - [ ] **config 加载时 URL schema 校验** — type=http 校验 http/https 前缀,type=tcp 校验 host:port;否则配错时 latency=0s 看起来像服务挂,实际是配置错
@@ -508,7 +554,7 @@ scrape_configs:
 
 ### v3 — 长期
 
-- [ ] K8s 集成:从 Service / Endpoints 自动发现 target(完整 Operator,用 controller-runtime + envtest 复用本周期的 embedded etcd 测试模式)
+- [ ] K8s 集成:从 Service / Endpoints 自动发现 target(完整 Operator,用 controller-runtime + envtest 复用 v2 的内嵌服务测试模式)
 - [ ] 共享存储后端:接 MySQL / TiDB,切换 leader 后 `/api/history` 仍能看到完整历史
 - [ ] 接入 OpenTelemetry,支持分布式追踪
 - [ ] eBPF 探针,从内核层观测 TCP 状态
@@ -518,4 +564,3 @@ scrape_configs:
 ## 📄 License
 
 [MIT](LICENSE)
-
