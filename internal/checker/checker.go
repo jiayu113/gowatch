@@ -15,10 +15,11 @@ type Checker interface {
 }
 
 type Result struct {
-	Target    string
-	Status    string
-	Latency   time.Duration
-	Error     string
-	ErrorType string
-	Timestamp time.Time
+	Target     string
+	Status     string
+	Latency    time.Duration
+	Error      string
+	ErrorType  string
+	Timestamp  time.Time
+	ExpiryDays float64 // 仅 cert 检查使用; 其他检查恒为零
 }
