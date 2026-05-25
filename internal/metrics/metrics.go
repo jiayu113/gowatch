@@ -50,6 +50,15 @@ var (
 			Help: "1 if this node is leader, 0 otherwise",
 		},
 	)
+
+	// SSL 证书剩余有效天数
+	SSLCertExpiryDays = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "gowatch_ssl_cert_expiry_days",
+			Help: "Days until SSL certificate expiry (negative = expired)",
+		},
+		[]string{"target"},
+	)
 )
 
 func Record(target, status, errType string, latencySeconds float64, hasError bool) {

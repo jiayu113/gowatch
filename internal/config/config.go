@@ -11,10 +11,11 @@ import (
 const defaultTimeout = 5 * time.Second
 
 type Target struct {
-	Name    string        `yaml:"name"`
-	Type    string        `yaml:"type"`
-	URL     string        `yaml:"url"`
-	Timeout time.Duration `yaml:"timeout"`
+	Name         string        `yaml:"name"`
+	Type         string        `yaml:"type"`
+	URL          string        `yaml:"url"`
+	Timeout      time.Duration `yaml:"timeout"`
+	CertWarnDays int           `yaml:"cert_warn_days,omitempty"` // cert 类型用,默认 14
 }
 
 type Config struct {
@@ -44,8 +45,8 @@ func LoadFromFile(path string) (*Config, error) {
 		if t.URL == "" {
 			return nil, fmt.Errorf("config %s: target %q missing url", path, t.Name)
 		}
-		if t.Type != "http" && t.Type != "tcp" {
-			return nil, fmt.Errorf("config %s: target %q has invalid type %q (must be http or tcp)", path, t.Name, t.Type)
+		if t.Type != "http" && t.Type != "tcp" && t.Type != "cert" {
+			return nil, fmt.Errorf("config %s: target %q has invalid type %q (must be http/tcp/cert)", path, t.Name, t.Type)
 		}
 
 		// 重名检查（重名会让 metrics label 冲突、让 status API 返回怪结果）

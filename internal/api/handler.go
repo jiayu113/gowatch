@@ -26,7 +26,7 @@ type ResultDTO struct {
 }
 
 type ClusterStatusDTO struct {
-	Mode     string `json:"mode"`      // cluster or single
+	Mode     string `json:"mode"`      // cluster or standalone
 	NodeID   string `json:"node_id"`   // 当前节点 ID
 	IsLeader bool   `json:"is_leader"` // 是否是 leader
 	Uptime   string `json:"uptime"`    // 服务启动时间

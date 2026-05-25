@@ -52,6 +52,12 @@ func (p *Pool) applyConfig(cfg *config.Config) {
 			p.checkers[t.Name] = checker.NewHTTPChecker(t)
 		case "tcp":
 			p.checkers[t.Name] = &checker.TCPChecker{Target: t}
+		case "cert":
+			warn := t.CertWarnDays
+			if warn == 0 {
+				warn = 14 // 默认 14 天
+			}
+			p.checkers[t.Name] = &checker.CertChecker{Target: t, WarnDays: warn}
 		default:
 			log.Printf("scheduler: unknown type=%q for target=%q, skipped", t.Type, t.Name)
 		}
@@ -152,6 +158,9 @@ func (p *Pool) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan confi
 		cancel()
 		log.Printf("worker: target=%s status=%s latency=%s", result.Target, result.Status, result.Latency)
 		metrics.Record(result.Target, result.Status, result.ErrorType, result.Latency.Seconds(), result.Error != "")
+		if target.Type == "cert" {
+			metrics.SSLCertExpiryDays.WithLabelValues(result.Target).Set(result.ExpiryDays)
+		}
 		results <- result
 	}
 }

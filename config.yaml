@@ -1,7 +1,7 @@
 targets:
   - name: baidu-home
     type: http
-    url: https://www.qq.com
+    url: https://www.baidu.com
     timeout: 3s
 
   - name: local-mysql
@@ -31,3 +31,13 @@ targets:
     type: http
     url: https://www.baidu.com
     timeout: 3s
+
+  - name: badssl-example
+    type: cert
+    url: badssl.com:443
+    cert_warn_days: 14
+
+  - name: badssl-example
+    type: cert
+    url: badssl.com:443
+    cert_warn_days: 14
