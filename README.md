@@ -1,24 +1,25 @@
 # GoWatch
 
-> 用 Go 写的轻量探活监控服务 —— 配置驱动、并发探测、错误分类、SQLite 持久化、HTTP API、Web 面板、Prometheus 指标、告警规则引擎、**多实例 active-standby(集群状态对外可见)**。单二进制、无 CGO、跨平台。
+> 用 Go 写的轻量探活监控服务 —— 配置驱动、并发探测、错误分类、SQLite 持久化、HTTP API、Web 面板、Prometheus 指标、告警规则引擎、**SSL/TLS 证书过期监控**、**多实例 active-standby(集群状态对外可见)**。单二进制、无 CGO、跨平台。
 
 ![Web 面板截图](image-2.png)
 
-GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果按**错误类型**分桶并写入 SQLite,通过 HTTP API + Web UI + Prometheus `/metrics` 端点暴露,命中告警规则后走 webhook 通知并落库。**v2 引入多实例部署**:通过 etcd 协调实现 active-standby 选主,任意时刻只有一个实例在跑 scheduler,Leader 失效后 follower 自动接管;集群身份对 Prometheus(`gowatch_is_leader`)、HTTP API(`/api/cluster/status`)和上游负载均衡(follower 数据接口返回 `503` + 角色 header)**都可见**;告警抑制状态通过 etcd 跨重启 / 跨 leader 切换对齐。**单机模式 100% 向后兼容(不开 `--cluster` flag 时行为与之前完全一致)**。整个服务是常驻进程,支持优雅关闭,可以放心 Ctrl+C 或 SIGTERM。
+GoWatch 周期性地对一组 **HTTP / TCP / SSL 证书**目标做健康检查,把结果按**错误类型**分桶并写入 SQLite,通过 HTTP API + Web UI + Prometheus `/metrics` 端点暴露,命中告警规则后走 webhook 通知并落库。**SSL 证书目标**会读叶子证书的 `NotAfter`,剩余天数低于阈值即判定为 down 并暴露到期天数指标,把 HTTP / TCP / 证书三类监控统一进同一套调度 + 告警 + 指标链路。**v2 引入多实例部署**:通过 etcd 协调实现 active-standby 选主,任意时刻只有一个实例在跑 scheduler,Leader 失效后 follower 自动接管;集群身份对 Prometheus(`gowatch_is_leader`)、HTTP API(`/api/cluster/status`)和上游负载均衡(follower 数据接口返回 `503` + 角色 header)**都可见**;告警抑制状态通过 etcd 跨重启 / 跨 leader 切换对齐。**单机模式 100% 向后兼容(不开 `--cluster` flag 时行为与之前完全一致)**。整个服务是常驻进程,支持优雅关闭,可以放心 Ctrl+C 或 SIGTERM。
 
 ---
 
 ## 特性
 
-- **多协议健康检查** — HTTP(S) 状态码 / TCP 端口连通性,通过 `Checker` 接口扩展
+- **多协议健康检查** — HTTP(S) 状态码 / TCP 端口连通性 / **SSL 证书剩余天数**,通过 `Checker` 接口扩展
+- **SSL/TLS 证书过期监控** — `cert` 检查类型做 TLS 握手、读叶子证书 `NotAfter`,剩余天数低于 `cert_warn_days`(默认 14)判定为 down,错误类型记为 `cert_expiring`;`gowatch_ssl_cert_expiry_days` 指标暴露到期天数,可直接接 Alertmanager 做提前预警;TLS 握手本身的网络错误(超时 / DNS / 拒绝)走同一套 `error_type` 分类
 - **并发 Worker Pool 调度** — 固定 worker + Ticker 周期触发 + collector 解耦写库
-- **错误分类(`error_type`)** — 把网络层错误归类为 `timeout` / `refused` / `dns` / `non_2xx` / `other`,Prometheus 指标按错误类型分桶,**让告警规则能区分"网络抖动"和"服务挂了"**
+- **错误分类(`error_type`)** — 把网络层错误归类为 `timeout` / `refused` / `dns` / `non_2xx` / `cert_expiring` / `other`,Prometheus 指标按错误类型分桶,**让告警规则能区分"网络抖动""服务挂了""证书快过期"**
 - **告警规则引擎** — 三种语义的规则匹配 + cooldown 抑制 + webhook 通知(带重试)+ SQLite 持久化;**抑制状态通过 etcd 跨重启 / 跨 leader 对齐(已接入主评估链路)**,`OnResult` 永不阻塞探测主链路
 - **多实例 active-standby(v2)** — `internal/cluster` 包封装 etcd Election,**Leader 跑 scheduler,follower 阻塞在 Campaign,session 失效后自动重新参选**;**集群身份对外可见**:`gowatch_is_leader` 指标 + `/api/cluster/status` 端点 + follower 数据接口返回 `503` 并带 `X-GoWatch-Role` 头;scheduler 对 cluster 层完全透明,单机模式不开 `--cluster` 完全向后兼容
 - **`LeaderState` 统一抽象** — 单机模式用 always-leader 的 `SingleLeader`,集群模式由 `cluster.Leader` 实现同一接口;API 层 / metric 层 / middleware 都只依赖这个接口,**两条装配路径不散落 if 分支**
 - **SQLite 持久化** — 纯 Go 驱动 (`modernc.org/sqlite`),无 CGO,跨平台编译零负担
 - **REST API + Web UI** — 实时状态、按 target 查历史、最近告警列表、集群状态查询,前端 5 秒自动刷新
-- **Prometheus 集成** — `/metrics` 端点暴露 counter / histogram / gauge(含 `gowatch_is_leader`),可直接接 Grafana + Alertmanager
+- **Prometheus 集成** — `/metrics` 端点暴露 counter / histogram / gauge(含 `gowatch_is_leader`、`gowatch_ssl_cert_expiry_days`),可直接接 Grafana + Alertmanager
 - **Graceful Shutdown** — `signal.NotifyContext` + `server.Shutdown` + scheduler done channel 三步收尾,不丢数据;集群模式额外加 leader 优雅下台(取消 leaderCtx + 5s 超时兜底)
 - **配置热加载(fsnotify)** — 监听 config.yaml 变化,200ms debounce 防抖,下一轮 dispatch 切换到新 checker
 - **CLI 工具化** — 同一个二进制支持服务模式、查询历史、查看最新状态三种用法
@@ -34,28 +35,32 @@ GoWatch 周期性地对一组 HTTP / TCP 目标做健康检查,把结果按**错
                           │
                           │ Ticker 每 N 秒触发 dispatch
                           ▼
-                    jobs channel ──┬─→ worker 1 ─┐
-                                   ├─→ worker 2 ─┤
-                                   ├─→ worker 3 ─┼─→ results channel ─→ collector ─┬─→ SQLite
-                                   ├─→ worker 4 ─┤                                 ├─→ Prometheus 指标更新
-                                   └─→ worker 5 ─┘                                 └─→ alert.Evaluator.OnResult
-                                                                                       │
-                                                                                       ▼
-                                                                            Window (per-target ring) → Rule.Match
-                                                                                       │
-                                                                                       ▼ 命中且未在 cooldown
-                                                                            go fire(rule, event)
-                                                                                       │
-                                                                                       ├─→ Webhook(POST,5xx 重试 1 次)
-                                                                                       └─→ emit channel → SaveAlert
+                    jobs channel ──┬─→ worker 1 ─┐  每个 worker:
+                                   ├─→ worker 2 ─┤   1. c.Check(ctx) (per-target 超时)
+                                   ├─→ worker 3 ─┼─  2. metrics.Record(...)
+                                   ├─→ worker 4 ─┤   3. cert 类型额外 set SSLCertExpiryDays
+                                   └─→ worker 5 ─┘   4. result → results channel
+                                                              │
+                                                              ▼
+                                                          collector ─┬─→ SQLite (store.Save)
+                                                                     └─→ alert.Evaluator.OnResult
+                                                                             │
+                                                                             ▼
+                                                                  Window (per-target ring) → Rule.Match
+                                                                             │
+                                                                             ▼ 命中且未在 cooldown
+                                                                  go fire(rule, event)
+                                                                             │
+                                                                             ├─→ Webhook(POST,5xx 重试 1 次)
+                                                                             └─→ emit channel → SaveAlert
 
 ctx.Done() ─→ close(jobs) ─→ workers 退出 ─→ close(results) ─→ collector 退出 ─→ store.Close
 ```
 
 **三层 goroutine 职责分离:**
 - **主 goroutine** — Ticker 派活、监听 ctx 信号、协调关闭顺序
-- **Worker Pool** — 并发跑 `Checker.Check(ctx)`,IO 密集场景天然受益于并发,每个 worker 用 per-target 独立 ctx 避免互相拖累
-- **Collector** — 单独 goroutine 串行写库 + 同步更新 Prometheus 指标 + 调用 `evaluator.OnResult`,把 IO 与指标写入和 worker 解耦
+- **Worker Pool** — 并发跑 `Checker.Check(ctx)`,IO 密集场景天然受益于并发,每个 worker 用 per-target 独立 ctx 避免互相拖累;**Prometheus 指标在 worker 里同步更新**(每次探测即时 `metrics.Record`,cert 目标额外 set `gowatch_ssl_cert_expiry_days`),指标反映每一次探测,不依赖后续写库
+- **Collector** — 单独 goroutine 串行写库 (`store.Save`) + 调用 `evaluator.OnResult`,把 SQLite IO 与 worker 解耦
 
 ### 集群模式(`--cluster`)
 
@@ -123,7 +128,7 @@ collector ──→ evaluator.OnResult(r)
 **关键设计:**
 
 - **`OnResult` 永不阻塞主链路** — Window.Push 与 suppressor 判断是 ms 级内存操作;真正可能慢的 webhook 全部丢进 `go fire(...)`,网络抖动绝对不会拖死 collector
-- **复用 v1 的 `error_type` 维度** — `consecutive_error_type` 规则可以做到"连续 2 次 dns 失败才告警",这是单纯 status 维度做不到的判断
+- **复用 `error_type` 维度** — `consecutive_error_type` 规则可以做到"连续 2 次 dns 失败才告警",这是单纯 status 维度做不到的判断;同理 `error_type=cert_expiring` 可以专门为"证书快过期"配规则
 - **Suppressor 是 (rule, target) 二元 key** — 同一规则在不同 target 上的 cooldown 互相独立,一个 target 在抑制窗口内不会让别的 target 也被静默
 - **Suppressor 跨重启 / 跨 leader 持久化(已接入主链路)** — `OnResult` 统一调用 `AllowAndPersist`:命中并放行时**异步**写 etcd(`/gowatch/suppressor/<rule>:<target>` → JSON `{LastFiredAt}`,不阻塞探测);leader 上位时 `LoadFromEtcd` 把所有 (rule, target) 的最近触发时间回灌内存。**`etcdCli == nil`(单机模式 / 集群启动降级)时自动退回纯内存 `Allow`,无分支侵入**
 - **Window cap=50 ring buffer** — 满了从尾部裁剪,保证内存有上界;`Snapshot` 返回独立副本,有专门的 unit test 守住这个契约
@@ -164,13 +169,24 @@ targets:
     url: 127.0.0.1:3306
     timeout: 2s
 
+  - name: example-ssl
+    type: cert
+    url: example.com:443
+    cert_warn_days: 14
+
   - name: dns-fail-test
     type: http
     url: http://xxx-not-exist-12345.com
     timeout: 3s
 ```
 
-通过 `type` 字段显式指定探测协议(`http` 或 `tcp`),scheduler 会构造对应的 Checker 实例。修改后保存,无需重启;watcher 检测到变化后会触发 reload,下一轮 dispatch 自动用新配置。
+字段说明:
+
+- `type` 显式指定探测协议(`http` / `tcp` / `cert`),scheduler 会构造对应的 Checker 实例
+- `type: cert` 的 `url` 是 `host:port`(TLS 握手用,不带 scheme),`cert_warn_days` 是剩余天数预警阈值,**省略时默认 14**;剩余天数低于这个值即判定为 down
+- `timeout` 省略时默认 5s,三类检查都通过 per-target ctx 强制执行
+
+修改后保存,无需重启;watcher 检测到变化后会触发 reload,下一轮 dispatch 自动用新配置。重名 target 会让 metrics label 冲突,**config 加载时会做重名校验,重名直接 fail-fast**。
 
 ### 告警规则(可选)
 
@@ -194,6 +210,14 @@ rules:
     cooldown: 10m
     webhook: http://localhost:9999/test-webhook
 
+  - name: cert-expiring
+    target: "*"
+    type: consecutive_error_type
+    error_type: cert_expiring
+    threshold: 1
+    cooldown: 12h
+    webhook: http://localhost:9999/test-webhook
+
   - name: high-error-rate
     target: "*"
     type: error_rate_window
@@ -204,6 +228,8 @@ rules:
 ```
 
 **`alerts.yaml` 文件不存在或加载失败,告警引擎自动关闭,不影响主服务启动。**
+
+> 证书快过期会让 cert 目标的 `status` 变成 down、`error_type` 变成 `cert_expiring`,所以**证书告警不需要单独的规则类型**:直接用 `consecutive_status`(status=down)或 `consecutive_error_type`(error_type=cert_expiring)就能命中。想要更直接的天数阈值告警,接 Alertmanager 用 `gowatch_ssl_cert_expiry_days` 更合适(见下文)。
 
 ### 启动服务(单机模式)
 
@@ -243,6 +269,39 @@ rules:
 
 # 查每个 target 当前最新状态(命令行版的 /api/status)
 ./gowatch --latest
+```
+
+---
+
+## 证书过期监控
+
+`cert` 检查类型把 SSL/TLS 证书纳入和 HTTP/TCP 同一套调度链路,适合盯独立站、API 网关、内部服务的证书有效期。
+
+**检查逻辑(`internal/checker/cert.go`):**
+
+1. `tls.Dialer.DialContext` 完成 TLS 握手(默认校验证书链 + hostname);握手失败按网络错误处理,`error_type` 走 `ClassifyNetErr`(可能是 `timeout` / `dns` / `refused` / `other`)
+2. 取对端叶子证书 `PeerCertificates[0]`,算 `NotAfter` 距今的剩余天数
+3. 剩余天数 `< cert_warn_days` → `status=down`、`error_type=cert_expiring`、`error` 带具体天数
+4. 否则 → `status=up`;无论 up/down,剩余天数都写进 `Result.ExpiryDays` 并由 worker set 到 `gowatch_ssl_cert_expiry_days` 指标
+
+**两种告警路径:**
+
+- **走 GoWatch 自己的告警引擎** — 用 `consecutive_error_type` + `error_type=cert_expiring`,命中即 webhook
+- **走 Alertmanager(推荐)** — 直接对 `gowatch_ssl_cert_expiry_days` 设阈值,能表达"剩余天数 < N"的连续区间,比 up/down 二值更精细:
+
+```yaml
+groups:
+  - name: gowatch-ssl
+    rules:
+      - alert: SSLCertExpiringSoon
+        expr: gowatch_ssl_cert_expiry_days < 14
+        for: 10m
+        annotations:
+          summary: "{{ $labels.target }} 证书剩余 {{ $value }} 天,即将过期"
+      - alert: SSLCertExpired
+        expr: gowatch_ssl_cert_expiry_days < 0
+        annotations:
+          summary: "{{ $labels.target }} 证书已过期"
 ```
 
 ---
@@ -388,9 +447,10 @@ Prometheus 兼容的指标端点(详见下一节)。
 | 指标 | 类型 | Labels | 说明 |
 |------|------|--------|------|
 | `gowatch_check_total` | counter | `target`, `status` | 累计检查次数,按 up/down 分桶 |
-| `gowatch_check_errors_total` | counter | `target`, **`error_type`** | 累计错误次数,**按错误类型分桶** |
+| `gowatch_check_errors_total` | counter | `target`, **`error_type`** | 累计错误次数,**按错误类型分桶**(含 `cert_expiring`) |
 | `gowatch_check_latency_seconds` | histogram | `target` | 检查耗时分布 |
 | `gowatch_target_up` | gauge | `target` | 当前是否 up(1=up, 0=down) |
+| `gowatch_ssl_cert_expiry_days` | gauge | `target` | **SSL 证书剩余有效天数**(负数=已过期);仅 cert 类型 target 上报 |
 | `gowatch_is_leader` | gauge | (无) | 当前实例是否是 leader(1=leader, 0=follower);**单机模式恒为 1**,多实例靠抓取 `instance` label 区分 |
 | 标准 Go runtime 指标 | - | - | goroutine 数、heap、GC 等 |
 
@@ -414,7 +474,7 @@ threshold: 3
 
 ```yaml
 type: consecutive_error_type
-error_type: timeout   # timeout / refused / dns / non_2xx / other
+error_type: timeout   # timeout / refused / dns / non_2xx / cert_expiring / other
 threshold: 3
 ```
 
@@ -423,6 +483,7 @@ threshold: 3
 - 连续 5 次 `timeout` → 大概率链路慢/丢包
 - 连续 3 次 `dns` → DNS 服务真挂了
 - 连续 3 次 `refused` → 后端服务进程没了
+- 连续 1 次 `cert_expiring` → 证书进入预警期(配 `threshold: 1` + 长 cooldown 即可)
 
 ### 3. `error_rate_window` — 时间窗口内错误率
 
@@ -445,17 +506,17 @@ window: 5m
 gowatch/
 ├── cmd/gowatch/main.go          # 入口:flag、模式分派、生命周期管理、装配 evaluator + cluster + LeaderState
 ├── internal/
-│   ├── config/                  # YAML 配置加载 + fsnotify 热加载
-│   ├── checker/                 # Checker 接口 + HTTP/TCP 实现 + 错误分类
+│   ├── config/                  # YAML 配置加载(http/tcp/cert 校验)+ fsnotify 热加载
+│   ├── checker/                 # Checker 接口 + HTTP/TCP/Cert 实现 + 错误分类
 │   ├── storage/                 # SQLite 封装(checks + alerts 两张表)
 │   ├── api/                     # HTTP Handler + RequireLeader middleware + Web UI(embed.FS)
-│   ├── scheduler/               # Worker Pool + Ticker + Collector
-│   ├── metrics/                 # Prometheus 指标定义(含 gowatch_is_leader)
+│   ├── scheduler/               # Worker Pool + Ticker + Collector(cert 目标额外上报到期天数)
+│   ├── metrics/                 # Prometheus 指标定义(含 gowatch_is_leader / gowatch_ssl_cert_expiry_days)
 │   ├── alert/                   # 告警引擎:rule / matchers / window /
 │   │                            #          suppressor(含 etcd 持久化)/
 │   │                            #          notifier / evaluator(WithEtcdClient option)
 │   └── cluster/                 # etcd 选主:session / leader / backoff /
-│                                #          state(LeaderState + SingleLeader)
+│                                #          state(LeaderState + SingleLeader)/ dockertest e2e
 ├── config.yaml                  # 探测目标配置示例
 ├── alerts.yaml                  # 告警规则配置示例
 ├── go.mod
@@ -466,10 +527,10 @@ gowatch/
 
 ```bash
 # 单独跑某个包
-go test -v ./internal/checker/   # checker 接口 + 错误分类
+go test -v ./internal/checker/   # checker 接口 + 错误分类 + cert 证书检查(自签证书:valid / 快过期两条路径)
 go test -v ./internal/storage/   # SQLite(:memory: 模式)
 go test -v ./internal/alert/     # 规则匹配 + Window + Suppressor(含 etcd 持久化)+ Notifier + 集成 + 故障注入
-go test -v ./internal/cluster/   # embedded etcd + Campaign / Failover / SessionExpire / CtxCancel
+go test -v ./internal/cluster/   # embedded etcd 多场景 + dockertest 真实容器 e2e
 go test -v ./internal/api/       # RequireLeader middleware(leader 放行 / follower 503 + header)
 
 # 全量
@@ -480,13 +541,23 @@ go test -cover ./...
 go test -race ./...
 ```
 
-**`internal/cluster` 测试覆盖的重点(全部基于 `go.etcd.io/etcd/server/v3/embed` 内嵌 etcd,无需外部容器):**
+**`internal/checker` 测试覆盖的重点:**
 
-- `TestEmbeddedEtcd` — sanity 测试,验证 embedded etcd 起得来并能 Put/Get,后续测试的地基
-- `TestLeader_CampaignSucceeds` — happy path,实例能成功 Campaign + 接收 ctx cancel + 干净退出
-- `TestLeader_TwoInstancesFailover` — A 上位后 B 必须阻塞;cancel A 的 ctx 后 B 在 10s 内接管
-- `TestLeader_SessionExpires` — 真实故障场景:直接 `Revoke` 掉 leader 的 lease 模拟 etcd 视角的 session 死亡,验证 follower 接管
-- `TestLeader_CtxCancelTriggersExit` — 优雅停机:ctx 被外部取消后,`Run` 必须在 7s 内退出
+- `http_test.go` — 2xx success / 5xx → non_2xx / ctx 超时 → timeout / 真实 ECONNREFUSED(起服务后立刻关端口,触发真实拒绝连接)
+- `errtype_test.go` — `ClassifyNetErr` 对 nil / deadline(含 wrap)/ DNSError / errno-refused / 字符串兜底-refused / 兜底-other 的分类
+- `cert_test.go` — **用 `httptest.NewTLSServer` 验有效证书 days > warn → up;用自签证书(5 天后过期)+ `tls.Listen` 验快过期 → down + `cert_expiring` + ExpiryDays 约 5**;TLSConfig 注入自定义 RootCAs 让测试不依赖真实公网证书
+
+**`internal/cluster` 测试覆盖的重点:**
+
+- **embedded etcd 套件**(基于 `go.etcd.io/etcd/server/v3/embed` 内嵌 etcd,无需外部容器):
+  - `TestEmbeddedEtcd` — sanity 测试,验证 embedded etcd 起得来并能 Put/Get,后续测试的地基
+  - `TestLeader_CampaignSucceeds` — happy path,实例能成功 Campaign + 接收 ctx cancel + 干净退出
+  - `TestLeader_TwoInstancesFailover` — A 上位后 B 必须阻塞;cancel A 的 ctx 后 B 在 10s 内接管
+  - `TestLeader_SessionExpires` — 真实故障场景:直接 `Revoke` 掉 leader 的 lease 模拟 etcd 视角的 session 死亡,验证 follower 接管
+  - `TestLeader_CtxCancelTriggersExit` — 优雅停机:ctx 被外部取消后,`Run` 必须在 7s 内退出
+- **dockertest 真实容器 e2e**(`dockertest_e2e_test.go`,起 `quay.io/coreos/etcd` 容器,**docker daemon 不可用时自动 `t.Skipf`**,不阻塞默认测试套件):
+  - `TestE2E_LeaderFailover` — 真实 etcd 上 A 上位、B 阻塞,cancel A 后 B 在 10s 内接管
+  - `TestE2E_EtcdPauseResume_Backoff` — **冻结 etcd 容器模拟网络黑洞**:A 丢 lease 后主动 demote 进 backoff,**解冻后验证自动重连并抢回 leader**(补 embedded etcd 测不到的网络层场景)
 
 **`internal/alert` 测试覆盖的重点:**
 
@@ -515,6 +586,7 @@ scrape_configs:
 然后在 Grafana 里画:
 
 - `gowatch_target_up` — 当前每个 target 是否在线
+- `gowatch_ssl_cert_expiry_days` — 每个证书 target 的剩余天数(配阈值红线一目了然)
 - `gowatch_is_leader` — 哪个实例当前是 leader(集群部署时)
 - `sum by (error_type) (rate(gowatch_check_errors_total[5m]))` — 错误类型分布
 - `histogram_quantile(0.99, rate(gowatch_check_latency_seconds_bucket[5m]))` — P99 延迟
@@ -538,17 +610,21 @@ scrape_configs:
 - [x] **告警系统的异步契约** — `OnResult` 永不阻塞 collector,webhook 故障(5xx/timeout)有专门的回归测试守护
 - [x] **多实例 active-standby + etcd 选主** — `internal/cluster` 包,回调式 API,scheduler 对 cluster 透明;单机模式 100% 向后兼容;embedded etcd 多场景单元测试(Campaign / Failover / SessionExpire / CtxCancel);fail-fast 启动 + 运行期指数退避 + 优雅下台 5s 兜底
 - [x] **Suppressor 跨重启持久化** — etcd 后端(`AllowAndPersist` / `LoadFromEtcd`),异步写入不阻塞主链路;`cli == nil` 时自动降级为纯内存(单机模式无侵入);`PersistAndLoad` 单元测试覆盖
-- [x] **集群状态对外可见(第四刀延伸)** — `gowatch_is_leader` 指标 + `/api/cluster/status` 端点 + `RequireLeader` 中间件(follower 数据接口 503 + 角色 header);`LeaderState` 接口统一单机/集群两条装配路径,middleware 单测覆盖 leader 放行 / follower 503
+- [x] **集群状态对外可见** — `gowatch_is_leader` 指标 + `/api/cluster/status` 端点 + `RequireLeader` 中间件(follower 数据接口 503 + 角色 header);`LeaderState` 接口统一单机/集群两条装配路径,middleware 单测覆盖 leader 放行 / follower 503
 - [x] **告警抑制接入主评估链路** — `NewEvaluator` 支持 `WithEtcdClient` functional option,`OnResult` 统一走 `AllowAndPersist`(单机 nil-safe 降级),leader 上位时 `LoadSuppressorFromEtcd` 回灌,**跨重启 / 跨 leader cooldown 真正对齐**
+
+### v2.x — Done
+
+- [x] **SSL / TLS 证书过期监控** — 新增 `cert` 检查类型(TLS 握手读叶子证书 `NotAfter`)+ `cert_warn_days` 阈值 + `gowatch_ssl_cert_expiry_days` 指标;证书快过期 → `status=down` + `error_type=cert_expiring`,直接复用告警引擎;config 校验扩到 http/tcp/cert,scheduler 装配 `CertChecker`;`cert_test.go` 用自签证书覆盖 valid / 快过期两条路径。**补齐 HTTP / TCP / SSL 三类监控**
+- [x] **dockertest 真实容器 e2e** — 起真实 etcd 容器(`quay.io/coreos/etcd`)跑端到端 leader 切换 + 容器冻结/解冻(模拟网络黑洞)验证 lease 丢失 demote → backoff → 网络恢复后重连重选;docker daemon 不可用时运行时 `t.Skipf`,补 embedded etcd 测不到的网络层场景
 
 ### v2.x — Backlog(计划中 + 已知待修复)
 
-- [ ] **dockertest e2e** — 起真实 etcd 容器跑端到端 leader 切换 + 网络分区,补 embedded etcd 测不到的网络层场景(分区 / 慢链接);用 build tag 隔离,不污染默认测试套件
-- [ ] **SSL / TLS 证书过期监控** — 新增 `cert` 检查类型(TLS 握手读叶子证书 `NotAfter`)+ `gowatch_ssl_cert_expiry_days` 指标 + 到期天数预警,补齐 HTTP / TCP / SSL 三类监控
+- [ ] **dockertest 用 build tag 彻底隔离** — 当前靠运行时 `t.Skipf` 跳过,仍在默认 `go test` 路径里;改成 build tag(如 `//go:build dockertest`)可彻底不进默认套件,本地/CI 显式开启
 - [ ] **`alerts.yaml` 热加载** — 复用 config watcher 的 debounce 思路,告警规则也支持运行时修改
 - [ ] **`fsnotify` watcher 改为监听父目录** — 当前监听文件本身,在 vim / VSCode 等 atomic save 编辑器下首次保存后 watcher 失效;改为监听父目录 + filter base name 可解决
-- [ ] **config 加载时 URL schema 校验** — type=http 校验 http/https 前缀,type=tcp 校验 host:port;否则配错时 latency=0s 看起来像服务挂,实际是配置错
-- [ ] **`ClassifyNetErr` 真实包装链集成测试** — 用 `httptest` 触发真实 dial 失败,覆盖 mock 漏掉的路径
+- [ ] **config 加载时 URL schema 校验** — type=http 校验 http/https 前缀,type=tcp / cert 校验 host:port;否则配错时 latency=0s 看起来像服务挂,实际是配置错
+- [ ] **`ClassifyNetErr` 真实包装链集成测试** — `errtype_test` 目前以 mock error 为主;用 `httptest` / 真实 dial 失败覆盖 mock 漏掉的包装路径
 - [ ] **告警去重 / 抑制升级** — 当前是 (rule, target) 维度 cooldown;复杂场景可能要"先收敛再发"(N 分钟批量一条)
 - [ ] **告警通知通道扩展** — 当前只支持 webhook;`Notifier` 接口已经抽出来,加 Email / 钉钉 / 飞书只是新加一个实现
 
