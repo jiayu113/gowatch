@@ -5,7 +5,7 @@ targets:
     timeout: 3s
 
   - name: local-mysql
-    type: http
+    type: tcp
     url: 127.0.0.1:3306
     timeout: 2s
 
@@ -37,7 +37,22 @@ targets:
     url: badssl.com:443
     cert_warn_days: 14
 
-  - name: badssl-example
+  - name: elevatorest-web
+    type: http
+    url: https://elevatorest.com
+    timeout: 5s
+
+  - name: elevatorest-cert
     type: cert
-    url: badssl.com:443
+    url: elevatorest.com:443
+    cert_warn_days: 14
+
+  - name: fmssensor-web
+    type: http
+    url: https://fmssensor.com
+    timeout: 5s
+    
+  - name: fmssensor-cert
+    type: cert
+    url: fmssensor.com:443
     cert_warn_days: 14

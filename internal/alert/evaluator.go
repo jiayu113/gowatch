@@ -3,6 +3,7 @@ package alert
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/jiayu113/gowatch/internal/checker"
@@ -14,9 +15,11 @@ type Evaluator struct {
 	rules      []Rule
 	window     *Window
 	suppressor *Suppressor
-	notifiers  map[string]Notifier // url -> notifier，复用同一个 http.Client
-	emit       chan<- Event
-	etcdCli    *clientv3.Client // 可选的 etcd 客户端，用于分布式抑制
+
+	mu        sync.Mutex
+	notifiers map[string]Notifier // url -> notifier，复用同一个 http.Client
+	emit      chan<- Event
+	etcdCli   *clientv3.Client // 可选的 etcd 客户端，用于分布式抑制
 }
 
 type EvaluatorOption func(*Evaluator)
@@ -72,11 +75,13 @@ func (e *Evaluator) OnResult(r checker.Result) {
 }
 
 func (e *Evaluator) fire(rule Rule, ev Event) {
+	e.mu.Lock()
 	n, ok := e.notifiers[rule.Webhook]
 	if !ok {
 		n = NewWebhookNotifier(rule.Webhook)
 		e.notifiers[rule.Webhook] = n
 	}
+	e.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := n.Notify(ctx, ev); err != nil {

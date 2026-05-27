@@ -65,6 +65,18 @@ func TestLoadFromFile_Validation(t *testing.T) {
   - name: a
     type: tcp
     url: 127.0.0.1:80`, "duplicate"},
+		{"http no scheme", `targets:
+  - name: a
+    type: http
+    url: 127.0.0.1:3306`, "http:// or https://"},
+		{"tcp with scheme", `targets:
+  - name: a
+    type: tcp
+    url: tcp://127.0.0.1:3306`, "host:port"},
+		{"cert no port", `targets:
+  - name: a
+    type: cert
+    url: example.com`, "host:port"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

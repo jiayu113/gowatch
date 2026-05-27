@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -47,6 +49,20 @@ func LoadFromFile(path string) (*Config, error) {
 		}
 		if t.Type != "http" && t.Type != "tcp" && t.Type != "cert" {
 			return nil, fmt.Errorf("config %s: target %q has invalid type %q (must be http/tcp/cert)", path, t.Name, t.Type)
+		}
+
+		switch t.Type {
+		case "http":
+			if !strings.HasPrefix(t.URL, "http://") && !strings.HasPrefix(t.URL, "https://") {
+				return nil, fmt.Errorf("config %s: target %q type=http requires url with http:// or https:// prefix, got %q", path, t.Name, t.URL)
+			}
+		case "tcp", "cert":
+			if strings.Contains(t.URL, "://") {
+				return nil, fmt.Errorf("config %s: target %q type=%s expects host:port (no scheme), got %q", path, t.Name, t.Type, t.URL)
+			}
+			if _, _, err := net.SplitHostPort(t.URL); err != nil {
+				return nil, fmt.Errorf("config %s: target %q type=%s url must be host:port: %v", path, t.Name, t.Type, err)
+			}
 		}
 
 		// 重名检查（重名会让 metrics label 冲突、让 status API 返回怪结果）

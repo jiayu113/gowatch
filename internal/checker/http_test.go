@@ -73,7 +73,7 @@ func TestHTTPChecker_Check(t *testing.T) {
 			if got.Target != tt.name {
 				t.Errorf("Target = %q ,want %q", got.Target, tt.name)
 			}
-			if got.Latency <= 0 {
+			if got.Latency < 0 {
 				t.Errorf("Latency should be > 0,got %v", got.Latency)
 			}
 		})

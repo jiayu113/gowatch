@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"log"
+	"path/filepath"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -15,7 +16,9 @@ func Watch(ctx context.Context, path string, ch chan<- *Config) error {
 	if err != nil {
 		return err
 	}
-	if err := w.Add(path); err != nil {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	if err := w.Add(dir); err != nil {
 		w.Close()
 		return err
 	}
@@ -31,7 +34,10 @@ func Watch(ctx context.Context, path string, ch chan<- *Config) error {
 				if !ok {
 					return
 				}
-				if ev.Op&fsnotify.Write == 0 {
+				if filepath.Base(ev.Name) != base {
+					continue
+				}
+				if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 					continue
 				}
 				if debounceTimer != nil {
