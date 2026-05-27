@@ -617,14 +617,15 @@ scrape_configs:
 
 - [x] **SSL / TLS 证书过期监控** — 新增 `cert` 检查类型(TLS 握手读叶子证书 `NotAfter`)+ `cert_warn_days` 阈值 + `gowatch_ssl_cert_expiry_days` 指标;证书快过期 → `status=down` + `error_type=cert_expiring`,直接复用告警引擎;config 校验扩到 http/tcp/cert,scheduler 装配 `CertChecker`;`cert_test.go` 用自签证书覆盖 valid / 快过期两条路径。**补齐 HTTP / TCP / SSL 三类监控**
 - [x] **dockertest 真实容器 e2e** — 起真实 etcd 容器(`quay.io/coreos/etcd`)跑端到端 leader 切换 + 容器冻结/解冻(模拟网络黑洞)验证 lease 丢失 demote → backoff → 网络恢复后重连重选;docker daemon 不可用时运行时 `t.Skipf`,补 embedded etcd 测不到的网络层场景
+- [x] **dockertest 用 build tag 彻底隔离** — 当前靠运行时 `t.Skipf` 跳过,仍在默认 `go test` 路径里;改成 build tag(如 `//go:build dockertest`)可彻底不进默认套件,本地/CI 显式开启
+- [x] **`fsnotify` watcher 改为监听父目录** — 当前监听文件本身,在 vim / VSCode 等 atomic save 编辑器下首次保存后 watcher 失效;改为监听父目录 + filter base name 可解决
+- [x] **config 加载时 URL schema 校验** — type=http 校验 http/https 前缀,type=tcp / cert 校验 host:port;否则配错时 latency=0s 看起来像服务挂,实际是配置错
+- [x] **`ClassifyNetErr` 真实包装链集成测试** — `errtype_test` 目前以 mock error 为主;用 `httptest` / 真实 dial 失败覆盖 mock 漏掉的包装路径
 
 ### v2.x — Backlog(计划中 + 已知待修复)
 
-- [ ] **dockertest 用 build tag 彻底隔离** — 当前靠运行时 `t.Skipf` 跳过,仍在默认 `go test` 路径里;改成 build tag(如 `//go:build dockertest`)可彻底不进默认套件,本地/CI 显式开启
+
 - [ ] **`alerts.yaml` 热加载** — 复用 config watcher 的 debounce 思路,告警规则也支持运行时修改
-- [ ] **`fsnotify` watcher 改为监听父目录** — 当前监听文件本身,在 vim / VSCode 等 atomic save 编辑器下首次保存后 watcher 失效;改为监听父目录 + filter base name 可解决
-- [ ] **config 加载时 URL schema 校验** — type=http 校验 http/https 前缀,type=tcp / cert 校验 host:port;否则配错时 latency=0s 看起来像服务挂,实际是配置错
-- [ ] **`ClassifyNetErr` 真实包装链集成测试** — `errtype_test` 目前以 mock error 为主;用 `httptest` / 真实 dial 失败覆盖 mock 漏掉的包装路径
 - [ ] **告警去重 / 抑制升级** — 当前是 (rule, target) 维度 cooldown;复杂场景可能要"先收敛再发"(N 分钟批量一条)
 - [ ] **告警通知通道扩展** — 当前只支持 webhook;`Notifier` 接口已经抽出来,加 Email / 钉钉 / 飞书只是新加一个实现
 
