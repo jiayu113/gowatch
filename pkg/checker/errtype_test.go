@@ -10,8 +10,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/jiayu113/gowatch/internal/config"
 )
 
 func TestClassifNetErr(t *testing.T) {
@@ -38,7 +36,7 @@ func TestClassifNetErr(t *testing.T) {
 }
 
 func TestClassifyNetErr_RealDNS(t *testing.T) {
-	h := NewHTTPChecker(config.Target{Name: "dns", URL: "http://no-such-host-zzz12345.invalid"})
+	h := NewHTTPChecker(Target{Name: "dns", URL: "http://no-such-host-zzz12345.invalid"})
 	got := h.Check(context.Background())
 	if got.ErrorType != ErrTypeDNS {
 		t.Errorf("real DNS failure: got %q want %q (err=%q)", got.ErrorType, ErrTypeDNS, got.Error)
@@ -52,7 +50,7 @@ func TestClassifyNetErr_RealTimeout(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	h := NewHTTPChecker(config.Target{
+	h := NewHTTPChecker(Target{
 		Name: "slow-target",
 		URL:  ts.URL,
 	})

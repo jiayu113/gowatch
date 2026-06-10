@@ -7,18 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jiayu113/gowatch/pkg/checker"
 	"gopkg.in/yaml.v3"
 )
 
 const defaultTimeout = 5 * time.Second
 
-type Target struct {
-	Name         string        `yaml:"name"`
-	Type         string        `yaml:"type"`
-	URL          string        `yaml:"url"`
-	Timeout      time.Duration `yaml:"timeout"`
-	CertWarnDays int           `yaml:"cert_warn_days,omitempty"` // cert 类型用,默认 14
-}
+type Target = checker.Target
 
 type Config struct {
 	Targets []Target

@@ -15,8 +15,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jiayu113/gowatch/internal/config"
 )
 
 // 有效证书
@@ -29,7 +27,7 @@ func TestCertChecker_ValidCert(t *testing.T) {
 	pool.AddCert(srv.Certificate())
 
 	c := &CertChecker{
-		Target:    config.Target{Name: "valid", URL: host},
+		Target:    Target{Name: "valid", URL: host},
 		WarnDays:  14,
 		TLSConfig: &tls.Config{RootCAs: pool},
 	}
@@ -59,7 +57,7 @@ func TestCertChecker_ExpiringSoon(t *testing.T) {
 		conn.Close()
 	}()
 	c := &CertChecker{
-		Target:    config.Target{Name: "expiring", URL: ln.Addr().String()},
+		Target:    Target{Name: "expiring", URL: ln.Addr().String()},
 		WarnDays:  14,
 		TLSConfig: &tls.Config{RootCAs: pool},
 	}

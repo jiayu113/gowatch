@@ -5,16 +5,14 @@ import (
 	"crypto/tls"
 	"fmt"
 	"time"
-
-	"github.com/jiayu113/gowatch/internal/config"
 )
 
 const ErrTypeCertExpiring = "cert_expiring"
 
 type CertChecker struct {
-	Target    config.Target // 目标
-	WarnDays  int           // 剩余天数低于这个值算 down, 默认 14
-	TLSConfig *tls.Config   // nil = 默认安全校验; 测试时注入自定义 RootCAs 或 InsecureSkipVerify
+	Target    Target      // 目标
+	WarnDays  int         // 剩余天数低于这个值算 down, 默认 14
+	TLSConfig *tls.Config // nil = 默认安全校验; 测试时注入自定义 RootCAs 或 InsecureSkipVerify
 }
 
 func (c *CertChecker) result(status, errMsg, errType string, days float64, start time.Time) Result {

@@ -5,16 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/jiayu113/gowatch/internal/config"
 )
 
 type HTTPChecker struct {
-	Target config.Target
+	Target Target
 	client *http.Client
 }
 
-func NewHTTPChecker(t config.Target) *HTTPChecker {
+func NewHTTPChecker(t Target) *HTTPChecker {
 	return &HTTPChecker{
 		Target: t,
 		client: &http.Client{

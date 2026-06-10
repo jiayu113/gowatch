@@ -4,12 +4,10 @@ import (
 	"context"
 	"net"
 	"time"
-
-	"github.com/jiayu113/gowatch/internal/config"
 )
 
 type TCPChecker struct {
-	Target config.Target
+	Target Target
 }
 
 func (t *TCPChecker) result(status, errMsg, errType string, start time.Time) Result {

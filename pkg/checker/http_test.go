@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/jiayu113/gowatch/internal/config"
 )
 
 func TestHTTPChecker_Check(t *testing.T) {
@@ -50,7 +48,7 @@ func TestHTTPChecker_Check(t *testing.T) {
 			srv := httptest.NewServer(tt.handler)
 			defer srv.Close()
 
-			h := NewHTTPChecker(config.Target{
+			h := NewHTTPChecker(Target{
 				Name: tt.name,
 				URL:  srv.URL,
 			})
@@ -86,7 +84,7 @@ func TestHTTPChecker_Check_ConnectionRefused(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	h := NewHTTPChecker(config.Target{Name: "refused", URL: url})
+	h := NewHTTPChecker(Target{Name: "refused", URL: url})
 
 	got := h.Check(context.Background())
 
