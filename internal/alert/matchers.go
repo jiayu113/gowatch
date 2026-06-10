@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jiayu113/gowatch/internal/checker"
+	"github.com/jiayu113/gowatch/pkg/checker"
 )
 
 // 连续 N 次 status 匹配（典型用例：连续 3 次 down 触发告警）

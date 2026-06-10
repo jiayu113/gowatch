@@ -3,7 +3,7 @@ package alert
 import (
 	"time"
 
-	"github.com/jiayu113/gowatch/internal/checker"
+	"github.com/jiayu113/gowatch/pkg/checker"
 )
 
 // Rule 描述一条告警规则。从 alerts.yaml 加载。

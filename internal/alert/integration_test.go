@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jiayu113/gowatch/internal/checker"
+	"github.com/jiayu113/gowatch/pkg/checker"
 )
 
 func TestEvaluator_FullPipeline(t *testing.T) {

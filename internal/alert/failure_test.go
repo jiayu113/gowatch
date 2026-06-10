@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jiayu113/gowatch/internal/checker"
+	"github.com/jiayu113/gowatch/pkg/checker"
 )
 
 // webhook 5xx 持续，verify evaluator 不阻塞主 OnResult 调用

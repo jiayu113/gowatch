@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jiayu113/gowatch/internal/checker"
+	"github.com/jiayu113/gowatch/pkg/checker"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

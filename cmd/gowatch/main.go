@@ -15,12 +15,12 @@ import (
 
 	"github.com/jiayu113/gowatch/internal/alert"
 	"github.com/jiayu113/gowatch/internal/api"
-	"github.com/jiayu113/gowatch/internal/checker"
 	"github.com/jiayu113/gowatch/internal/cluster"
 	"github.com/jiayu113/gowatch/internal/config"
 	"github.com/jiayu113/gowatch/internal/metrics"
 	"github.com/jiayu113/gowatch/internal/scheduler"
 	"github.com/jiayu113/gowatch/internal/storage"
+	"github.com/jiayu113/gowatch/pkg/checker"
 )
 
 func main() {

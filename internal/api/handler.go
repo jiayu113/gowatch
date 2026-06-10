@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jiayu113/gowatch/internal/checker"
 	"github.com/jiayu113/gowatch/internal/cluster"
 	"github.com/jiayu113/gowatch/internal/storage"
+	"github.com/jiayu113/gowatch/pkg/checker"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 

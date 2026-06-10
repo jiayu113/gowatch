@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/jiayu113/gowatch/internal/alert"
-	"github.com/jiayu113/gowatch/internal/checker"
 	"github.com/jiayu113/gowatch/internal/config"
 	"github.com/jiayu113/gowatch/internal/metrics"
 	"github.com/jiayu113/gowatch/internal/storage"
+	"github.com/jiayu113/gowatch/pkg/checker"
 )
 
 // Pool 是检测调度器

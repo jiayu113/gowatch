@@ -3,7 +3,7 @@ package alert
 import (
 	"sync"
 
-	"github.com/jiayu113/gowatch/internal/checker"
+	"github.com/jiayu113/gowatch/pkg/checker"
 )
 
 type Window struct {

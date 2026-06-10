@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/jiayu113/gowatch/internal/alert"
-	"github.com/jiayu113/gowatch/internal/checker"
+	"github.com/jiayu113/gowatch/pkg/checker"
 	_ "modernc.org/sqlite"
 )
 
