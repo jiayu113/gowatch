@@ -113,7 +113,6 @@ func main() {
 	}
 
 	emitCh := make(chan alert.Event, 100)
-	evaluator := alert.NewEvaluator(alertCfg.Rules, emitCh)
 	go func() {
 		for ev := range emitCh {
 			if err := store.SaveAlert(ev); err != nil {
@@ -128,7 +127,6 @@ func main() {
 
 	// 启动scheduler，用done channel等它真的退出
 	pool := scheduler.NewPool(store, cfg, 5, 10*time.Second)
-	pool.SetEvaluator(evaluator)
 	poolDone := make(chan struct{})
 	var leaderState cluster.LeaderState
 	if *clusterMode {

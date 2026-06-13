@@ -29,7 +29,7 @@ targets:
 
   - name: bing
     type: http
-    url: https://www.baidu.com
+    url: https://www.bing.com
     timeout: 3s
 
   - name: badssl-example
