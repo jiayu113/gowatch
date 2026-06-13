@@ -36,23 +36,3 @@ targets:
     type: cert
     url: badssl.com:443
     cert_warn_days: 14
-
-  - name: elevatorest-web
-    type: http
-    url: https://elevatorest.com
-    timeout: 5s
-
-  - name: elevatorest-cert
-    type: cert
-    url: elevatorest.com:443
-    cert_warn_days: 14
-
-  - name: fmssensor-web
-    type: http
-    url: https://fmssensor.com
-    timeout: 5s
-    
-  - name: fmssensor-cert
-    type: cert
-    url: fmssensor.com:443
-    cert_warn_days: 14
