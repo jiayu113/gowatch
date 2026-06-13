@@ -375,13 +375,6 @@ groups:
 
 > `gowatch_is_leader` 是不带 label 的 gauge,多实例靠 Prometheus 抓取时的 `instance` label 区分。`absent(gowatch_is_leader == 1)` 同时覆盖"实例都在但无 leader"和"实例全挂"两种情况。
 
-### 已知 trade-off
-
-- **极端时序下切换期可能重复告警一次** — 抑制状态已通过 etcd 跨 leader 对齐(老 leader 触发即异步写 etcd,新 leader 上位 `LoadFromEtcd` 回灌)。残留窗口:老 leader 触发后、异步写 etcd 尚未落盘就宕机,新 leader 加载不到这一条,可能重复发一次。**这是有意取舍——异步写不阻塞探测主链路,代价是极端时序下偶发一次重复**
-- **切换后新 leader 的 SQLite 是空的** — `/api/history` 看不到上一任的数据,因为 SQLite 是 per-instance 的;接入共享存储(MySQL / TiDB)在后续路线实现
-- **etcd 全挂时无 leader** — GoWatch 的探测也会停下来,这就是为什么 `GoWatchNoLeader` 这条 Alertmanager 规则**不能省**
-- **failover 窗口期(5-15s)探测有空档** — 这是 active-standby 架构的固有特性,不是 bug;真要消除需要 active-active + 任务分片,超出当前定位
-
 ---
 
 ## API
