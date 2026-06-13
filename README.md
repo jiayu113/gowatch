@@ -6,11 +6,14 @@
 
 GoWatch 周期性地对一组 **HTTP / TCP / SSL 证书**目标做健康检查,把结果按**错误类型**分桶并写入 SQLite,通过 HTTP API + Web UI + Prometheus `/metrics` 端点暴露,命中告警规则后走 webhook 通知并落库。**SSL 证书目标**会读叶子证书的 `NotAfter`,剩余天数低于阈值即判定为 down 并暴露到期天数指标,把 HTTP / TCP / 证书三类监控统一进同一套调度 + 告警 + 指标链路。**v2 引入多实例部署**:通过 etcd 协调实现 active-standby 选主,任意时刻只有一个实例在跑 scheduler,Leader 失效后 follower 自动接管;集群身份对 Prometheus(`gowatch_is_leader`)、HTTP API(`/api/cluster/status`)和上游负载均衡(follower 数据接口返回 `503` + 角色 header)**都可见**;告警抑制状态通过 etcd 跨重启 / 跨 leader 切换对齐。**单机模式 100% 向后兼容(不开 `--cluster` flag 时行为与之前完全一致)**。整个服务是常驻进程,支持优雅关闭,可以放心 Ctrl+C 或 SIGTERM。
 
+> **项目线**:本仓是 GoWatch 的独立守护进程形态(v1–v2.x)。K8s Operator 形态见子项目仓 **[gowatch-operator](https://github.com/jiayu113/gowatch-operator)**(产品线 v3)——其进程内探测引擎经 versioned Go module 跨仓复用本仓的公开包 [`pkg/checker`](#pkgchecker-公开包)。
+
 ---
 
 ## 特性
 
 - **多协议健康检查** — HTTP(S) 状态码 / TCP 端口连通性 / **SSL 证书剩余天数**,通过 `Checker` 接口扩展
+- **公开探测内核(`pkg/checker`)** — `Checker` 接口、HTTP/TCP/Cert 三个实现与 `error_type` 错误分类以公开包形式暴露,经 versioned Go module(`v1.2.0`)被子项目 [gowatch-operator](https://github.com/jiayu113/gowatch-operator) 真实跨仓消费(详见 [pkg/checker 公开包](#pkgchecker-公开包))
 - **SSL/TLS 证书过期监控** — `cert` 检查类型做 TLS 握手、读叶子证书 `NotAfter`,剩余天数低于 `cert_warn_days`(默认 14)判定为 down,错误类型记为 `cert_expiring`;`gowatch_ssl_cert_expiry_days` 指标暴露到期天数,可直接接 Alertmanager 做提前预警;TLS 握手本身的网络错误(超时 / DNS / 拒绝)走同一套 `error_type` 分类
 - **并发 Worker Pool 调度** — 固定 worker + Ticker 周期触发 + collector 解耦写库
 - **错误分类(`error_type`)** — 把网络层错误归类为 `timeout` / `refused` / `dns` / `non_2xx` / `cert_expiring` / `other`,Prometheus 指标按错误类型分桶,**让告警规则能区分"网络抖动""服务挂了""证书快过期"**
@@ -277,7 +280,7 @@ rules:
 
 `cert` 检查类型把 SSL/TLS 证书纳入和 HTTP/TCP 同一套调度链路,适合盯独立站、API 网关、内部服务的证书有效期。
 
-**检查逻辑(`internal/checker/cert.go`):**
+**检查逻辑(`pkg/checker/cert.go`):**
 
 1. `tls.Dialer.DialContext` 完成 TLS 握手(默认校验证书链 + hostname);握手失败按网络错误处理,`error_type` 走 `ClassifyNetErr`(可能是 `timeout` / `dns` / `refused` / `other`)
 2. 取对端叶子证书 `PeerCertificates[0]`,算 `NotAfter` 距今的剩余天数
@@ -375,7 +378,7 @@ groups:
 ### 已知 trade-off
 
 - **极端时序下切换期可能重复告警一次** — 抑制状态已通过 etcd 跨 leader 对齐(老 leader 触发即异步写 etcd,新 leader 上位 `LoadFromEtcd` 回灌)。残留窗口:老 leader 触发后、异步写 etcd 尚未落盘就宕机,新 leader 加载不到这一条,可能重复发一次。**这是有意取舍——异步写不阻塞探测主链路,代价是极端时序下偶发一次重复**
-- **切换后新 leader 的 SQLite 是空的** — `/api/history` 看不到上一任的数据,因为 SQLite 是 per-instance 的;接入共享存储(MySQL / TiDB)在 v3 实现
+- **切换后新 leader 的 SQLite 是空的** — `/api/history` 看不到上一任的数据,因为 SQLite 是 per-instance 的;接入共享存储(MySQL / TiDB)在后续路线实现
 - **etcd 全挂时无 leader** — GoWatch 的探测也会停下来,这就是为什么 `GoWatchNoLeader` 这条 Alertmanager 规则**不能省**
 - **failover 窗口期(5-15s)探测有空档** — 这是 active-standby 架构的固有特性,不是 bug;真要消除需要 active-active + 任务分片,超出当前定位
 
@@ -498,6 +501,35 @@ window: 5m
 
 ---
 
+## pkg/checker 公开包
+
+探测内核(`Checker` 接口、HTTP / TCP / Cert 三个实现、`error_type` 错误分类)以**公开包**形式暴露在 `pkg/checker`,任何外部 Go module 都可以直接消费:
+
+```go
+import "github.com/jiayu113/gowatch/pkg/checker"
+
+c := checker.NewHTTPChecker(checker.Target{
+    Name:    "demo",
+    Type:    "http",
+    URL:     "http://10.0.0.1:80/healthz",
+    Timeout: 3 * time.Second,
+})
+r := c.Check(ctx) // Result{Status, Latency, Error, ErrorType, ...}
+```
+
+**对外 API 一览:**
+
+| 标识符 | 说明 |
+|--------|------|
+| `Checker` 接口 | `Check(ctx) Result`,所有探测器的统一抽象 |
+| `Target` | 探测目标描述(名称 / 类型 / URL / 超时 / 证书阈值) |
+| `Result` | 单次探测结果(状态 / 延迟 / 错误 / 错误类型 / 证书剩余天数) |
+| `NewHTTPChecker` / `TCPChecker` / `CertChecker` | 三个具体实现 |
+| `ClassifyNetErr` | 网络错误归类:`timeout` / `refused` / `dns` / `other` |
+| `ErrType*` 常量 | 错误类型字符串常量(含 `non_2xx`、`cert_expiring`) |
+
+---
+
 ## 开发
 
 ### 目录结构
@@ -505,9 +537,12 @@ window: 5m
 ```
 gowatch/
 ├── cmd/gowatch/main.go          # 入口:flag、模式分派、生命周期管理、装配 evaluator + cluster + LeaderState
+├── pkg/
+│   └── checker/                 # ★ 公开探测内核:Checker 接口 + HTTP/TCP/Cert 实现 + 错误分类
+│                                #   被 gowatch-operator 经 versioned Go module(v1.2.0)跨仓复用
 ├── internal/
 │   ├── config/                  # YAML 配置加载(http/tcp/cert 校验)+ fsnotify 热加载
-│   ├── checker/                 # Checker 接口 + HTTP/TCP/Cert 实现 + 错误分类
+│   │                            #   (Target 定义已下沉至 pkg/checker,此处保留 type Target = checker.Target 别名)
 │   ├── storage/                 # SQLite 封装(checks + alerts 两张表)
 │   ├── api/                     # HTTP Handler + RequireLeader middleware + Web UI(embed.FS)
 │   ├── scheduler/               # Worker Pool + Ticker + Collector(cert 目标额外上报到期天数)
@@ -527,7 +562,7 @@ gowatch/
 
 ```bash
 # 单独跑某个包
-go test -v ./internal/checker/   # checker 接口 + 错误分类 + cert 证书检查(自签证书:valid / 快过期两条路径)
+go test -v ./pkg/checker/        # checker 接口 + 错误分类 + cert 证书检查(自签证书:valid / 快过期两条路径)
 go test -v ./internal/storage/   # SQLite(:memory: 模式)
 go test -v ./internal/alert/     # 规则匹配 + Window + Suppressor(含 etcd 持久化)+ Notifier + 集成 + 故障注入
 go test -v ./internal/cluster/   # embedded etcd 多场景 + dockertest 真实容器 e2e
@@ -541,7 +576,7 @@ go test -cover ./...
 go test -race ./...
 ```
 
-**`internal/checker` 测试覆盖的重点:**
+**`pkg/checker` 测试覆盖的重点:**
 
 - `http_test.go` — 2xx success / 5xx → non_2xx / ctx 超时 → timeout / 真实 ECONNREFUSED(起服务后立刻关端口,触发真实拒绝连接)
 - `errtype_test.go` — `ClassifyNetErr` 对 nil / deadline(含 wrap)/ DNSError / errno-refused / 字符串兜底-refused / 兜底-other 的分类
@@ -555,7 +590,7 @@ go test -race ./...
   - `TestLeader_TwoInstancesFailover` — A 上位后 B 必须阻塞;cancel A 的 ctx 后 B 在 10s 内接管
   - `TestLeader_SessionExpires` — 真实故障场景:直接 `Revoke` 掉 leader 的 lease 模拟 etcd 视角的 session 死亡,验证 follower 接管
   - `TestLeader_CtxCancelTriggersExit` — 优雅停机:ctx 被外部取消后,`Run` 必须在 7s 内退出
-- **dockertest 真实容器 e2e**(`dockertest_e2e_test.go`,起 `quay.io/coreos/etcd` 容器,**docker daemon 不可用时自动 `t.Skipf`**,不阻塞默认测试套件):
+- **dockertest 真实容器 e2e**(`dockertest_e2e_test.go`,起 `quay.io/coreos/etcd` 容器,**用 `//go:build dockertest` build tag 彻底隔离,不进默认测试套件**,docker daemon 不可用时自动 `t.Skipf`):
   - `TestE2E_LeaderFailover` — 真实 etcd 上 A 上位、B 阻塞,cancel A 后 B 在 10s 内接管
   - `TestE2E_EtcdPauseResume_Backoff` — **冻结 etcd 容器模拟网络黑洞**:A 丢 lease 后主动 demote 进 backoff,**解冻后验证自动重连并抢回 leader**(补 embedded etcd 测不到的网络层场景)
 
@@ -622,8 +657,12 @@ scrape_configs:
 - [x] **config 加载时 URL schema 校验** — type=http 校验 http/https 前缀,type=tcp / cert 校验 host:port;否则配错时 latency=0s 看起来像服务挂,实际是配置错
 - [x] **`ClassifyNetErr` 真实包装链集成测试** — `errtype_test` 目前以 mock error 为主;用 `httptest` / 真实 dial 失败覆盖 mock 漏掉的包装路径
 
-### v2.x — Backlog(计划中 + 已知待修复)
+### checker 内核公开化(tag `v1.2.0`)— Done
 
+- [x] **`internal/checker` → `pkg/checker` 公开包抽取** — `Target` 下沉至公开包 + `internal/config` 保留类型别名,本仓零改动通过全部测试(详见 [pkg/checker 公开包](#pkgchecker-公开包))
+- [x] **打 tag `v1.2.0` 并经 goproxy 可解析** — [gowatch-operator](https://github.com/jiayu113/gowatch-operator) 已经由 versioned Go module 真实消费本包
+
+### v2.x — Backlog(计划中 + 已知待修复)
 
 - [ ] **`alerts.yaml` 热加载** — 复用 config watcher 的 debounce 思路,告警规则也支持运行时修改
 - [ ] **告警去重 / 抑制升级** — 当前是 (rule, target) 维度 cooldown;复杂场景可能要"先收敛再发"(N 分钟批量一条)
@@ -631,7 +670,7 @@ scrape_configs:
 
 ### v3 — 长期
 
-- [ ] K8s 集成:从 Service / Endpoints 自动发现 target(完整 Operator,用 controller-runtime + envtest 复用 v2 的内嵌服务测试模式)
+- [x] **K8s 集成 → 已落地为独立项目 [gowatch-operator](https://github.com/jiayu113/gowatch-operator)**:`Watch` CRD 声明式监控集群内 Service——自动发现 Endpoints、进程内并发探测、leader election 单活、错误分类透传 status condition、自定义 Prometheus 指标、envtest + e2e 双层测试;探测层经 `pkg/checker` 跨仓复用本仓内核
 - [ ] 共享存储后端:接 MySQL / TiDB,切换 leader 后 `/api/history` 仍能看到完整历史
 - [ ] 接入 OpenTelemetry,支持分布式追踪
 - [ ] eBPF 探针,从内核层观测 TCP 状态
