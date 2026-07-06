@@ -1,0 +1,15 @@
+# aiops.example.yaml —— 复制为 aiops.yaml 并按需修改(aiops.yaml 已 gitignore,不进仓)
+enabled: true
+llm:
+  base_url: https://api.deepseek.com     # OpenAI 兼容端点
+  model: deepseek-chat
+  api_key_env: GOWATCH_AIOPS_API_KEY     # 只填环境变量名,绝不填 key 本身
+  timeout: 15s
+limits:
+  cooldown: 10m          # 同 target+rule 冷却
+  daily_max: 50          # 每日调用上限
+  breaker_fails: 3       # 连续失败 N 次熔断
+  breaker_open: 5m       # 熔断持续
+output:
+  dir: data/aiops        # 诊断 JSONL 落盘目录
+history_limit: 50        # 每次分析取该目标最近 N 条历史
