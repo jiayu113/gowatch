@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jiayu113/gowatch/internal/aiops"
 	"github.com/jiayu113/gowatch/internal/alert"
 	"github.com/jiayu113/gowatch/internal/api"
 	"github.com/jiayu113/gowatch/internal/cluster"
@@ -112,18 +113,35 @@ func main() {
 		alertCfg = &alert.Config{}
 	}
 
-	emitCh := make(chan alert.Event, 100)
-	go func() {
-		for ev := range emitCh {
-			if err := store.SaveAlert(ev); err != nil {
-				log.Printf("alert: save failed: %v", err)
-			}
-		}
-	}()
-
 	// 监听SIGINT/SIGTERM的ctx
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	aiCfg, err := aiops.LoadFromFile("aiops.yaml")
+	if err != nil {
+		log.Printf("aiops: config error, disabled: %v", err)
+	}
+	var analyzer *aiops.Analyzer
+	if aiCfg != nil && aiCfg.Enabled {
+		// llm := aiops.NewOpenAICompat(aiCfg)
+		analyzer = aiops.New(aiCfg, nil, store.GetByTarget)
+		go analyzer.Run(ctx)
+		log.Printf("aiops: enabled model=%s", aiCfg.LLM.Model)
+	}
+
+	emitCh := make(chan alert.Event, 100)
+	go func() {
+		for ev := range emitCh {
+			// 主链路：正常存数据库
+			if err := store.SaveAlert(ev); err != nil {
+				log.Printf("alert: save failed: %v", err)
+			}
+			// 2. 旁路：如果开启了 AI，把同一份告警塞给 AI 处理
+			if analyzer != nil {
+				analyzer.Submit(ev)
+			}
+		}
+	}()
 
 	// 启动scheduler，用done channel等它真的退出
 	pool := scheduler.NewPool(store, cfg, 5, 10*time.Second)

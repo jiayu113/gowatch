@@ -59,6 +59,14 @@ var (
 		},
 		[]string{"target"},
 	)
+
+	// AIOps 分析次数
+	AIOpsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gowatch_aiops_analyses_total",
+			Help: "AIOps analyses by outcome (ok/error/dropped/suppressed).",
+		}, []string{"outcome"},
+	)
 )
 
 func Record(target, status, errType string, latencySeconds float64, hasError bool) {

@@ -1,6 +1,7 @@
 # 编译产物
 gowatch
 gowatch.exe
+data/
 
 # 数据库文件
 *.db
@@ -26,3 +27,4 @@ Thumbs.db
 config.live.yaml
 operator.bundle
 *.bundle
+aiops.yaml
