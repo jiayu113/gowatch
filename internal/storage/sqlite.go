@@ -10,20 +10,21 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Store 是 storage 包对外暴露的"存储句柄"。
+// Store 是 storage 包对外暴露的"存储句柄"
 // 内部持有一个 *sql.DB 连接池
 type Store struct {
 	db *sql.DB
 }
 
-// New 打开（或创建）数据库文件，创建表（如果不存在），返回 Store。
+// New 打开（或创建）数据库文件，创建表（如果不存在），返回 Store
 func New(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+
 	if err != nil {
 		return nil, err
 	}
 
-	// 建表。IF NOT EXISTS 让这个操作幂等——重复运行不会报错。
+	// 建表。IF NOT EXISTS 让这个操作幂等——重复运行不会报错
 	_, err = db.Exec(`
 	CREATE TABLE IF NOT EXISTS checks(
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,14 +67,13 @@ func New(path string) (*Store, error) {
 		return nil, err
 	}
 
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
+	db.SetMaxOpenConns(1)
 	db.SetConnMaxLifetime(time.Hour)
 
 	return &Store{db: db}, nil
 }
 
-// Save 保存单次检测结果。
+// Save 保存单次检测结果
 func (s *Store) Save(r checker.Result) error {
 	_, err := s.db.Exec(
 		`INSERT INTO checks(target,status,latency_ms,error) VALUES (?,?,?,?)`,
@@ -82,7 +82,7 @@ func (s *Store) Save(r checker.Result) error {
 	return err
 }
 
-// GetRecent 返回最近 n 条记录，按时间倒序。
+// GetRecent 返回最近 n 条记录，按时间倒序
 func (s *Store) GetRecent(n int) ([]checker.Result, error) {
 	rows, err := s.db.Query(
 		`SELECT target,status,latency_ms,error,ts FROM checks ORDER BY ts DESC LIMIT ?`,
@@ -111,7 +111,7 @@ func (s *Store) GetRecent(n int) ([]checker.Result, error) {
 	return results, nil
 }
 
-// GetByTarget 返回某个 target 的历史记录。
+// GetByTarget 返回某个 target 的历史记录
 func (s *Store) GetByTarget(target string, limit int) ([]checker.Result, error) {
 	rows, err := s.db.Query(
 		`SELECT target,status,latency_ms,error,ts FROM checks WHERE target=? ORDER BY ts DESC LIMIT ?`,
@@ -139,7 +139,7 @@ func (s *Store) GetByTarget(target string, limit int) ([]checker.Result, error) 
 	return results, nil
 }
 
-// SaveBatch 批量保存结果，用事务保证原子性。
+// SaveBatch 批量保存结果，用事务保证原子性
 func (s *Store) SaveBatch(results []checker.Result) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -167,7 +167,7 @@ func (s *Store) SaveBatch(results []checker.Result) error {
 	return nil
 }
 
-// GetLatestPerTarget 返回每个 target 的最新一条记录。
+// GetLatestPerTarget 返回每个 target 的最新一条记录
 func (s *Store) GetLatestPerTarget() ([]checker.Result, error) {
 	query := `
 	SELECT c.target, c.status, c.latency_ms, c.error, c.ts
@@ -198,7 +198,7 @@ func (s *Store) GetLatestPerTarget() ([]checker.Result, error) {
 	return results, rows.Err()
 }
 
-// Close 关闭数据库连接。
+// Close 关闭数据库连接
 func (s *Store) Close() error {
 	return s.db.Close()
 }

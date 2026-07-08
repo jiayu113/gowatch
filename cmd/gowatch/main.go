@@ -123,10 +123,14 @@ func main() {
 	}
 	var analyzer *aiops.Analyzer
 	if aiCfg != nil && aiCfg.Enabled {
-		// llm := aiops.NewOpenAICompat(aiCfg)
-		analyzer = aiops.New(aiCfg, nil, store.GetByTarget)
-		go analyzer.Run(ctx)
-		log.Printf("aiops: enabled model=%s", aiCfg.LLM.Model)
+		llm := aiops.NewOpenAICompat(aiCfg)
+		if llm == nil {
+			log.Printf("aiops: llm 初始化失败，AI 分析禁用（主链路正常运行）")
+		} else {
+			analyzer = aiops.New(aiCfg, llm, store.GetByTarget)
+			go analyzer.Run(ctx)
+			log.Printf("aiops: enabled model=%s", aiCfg.LLM.Model)
+		}
 	}
 
 	emitCh := make(chan alert.Event, 100)
@@ -136,7 +140,7 @@ func main() {
 			if err := store.SaveAlert(ev); err != nil {
 				log.Printf("alert: save failed: %v", err)
 			}
-			// 2. 旁路：如果开启了 AI，把同一份告警塞给 AI 处理
+			// 旁路：如果开启了 AI，把同一份告警塞给 AI 处理
 			if analyzer != nil {
 				analyzer.Submit(ev)
 			}

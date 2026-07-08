@@ -63,6 +63,10 @@ func (a *Analyzer) Run(ctx context.Context) {
 }
 
 func (a *Analyzer) handle(ctx context.Context, ev alert.Event) {
+	if a.llm == nil {
+		log.Printf("aiops: llm 未配置，跳过 target=%s", ev.Target)
+		return
+	}
 	if reason, ok := a.gate(ev); !ok {
 		metrics.AIOpsTotal.WithLabelValues(reason).Inc()
 		log.Printf("aiops: %s target=%s", reason, ev.Target)
@@ -71,6 +75,7 @@ func (a *Analyzer) handle(ctx context.Context, ev alert.Event) {
 	hist, err := a.history(ev.Target, a.cfg.HistoryLimit)
 	if err != nil {
 		log.Printf("aiops: history query failed: %v", err)
+		return
 	}
 	dc := BuildContext(ev, hist)
 

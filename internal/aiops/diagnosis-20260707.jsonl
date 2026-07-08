@@ -1,2 +1,0 @@
-{"time":"2026-07-07T15:33:58.3193188+08:00","rule":"OOM","target":"ServerB","reason":"","advice":"## 可能根因\n- mock","model":"","latency_ms":0}
-{"time":"2026-07-07T16:55:47.0077984+08:00","rule":"OOM","target":"ServerB","reason":"","advice":"## 可能根因\n- mock","model":"","latency_ms":0}
