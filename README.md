@@ -128,7 +128,7 @@ rules:
 - leader 失效后 follower 约 15 秒内自动接管(session TTL 15s / 心跳 5s);新 leader 上位时从 etcd 回灌告警抑制状态,cooldown 不在切换瞬间清零
 - `gowatch_is_leader` 指标可直接表达"无 leader"(`absent(gowatch_is_leader == 1)`)与"脑裂"(`sum(gowatch_is_leader) > 1`);GoWatch 自己是被监控对象,集群整体健康需接外部 Alertmanager(规则示例见 [docs/architecture.md](docs/architecture.md#接-alertmanager))
 
-## AIOps 诊断层(实验性)
+## AIOps 诊断层
 
 告警触发后,旁路生成 LLM 根因分析与排查建议(不影响告警主链路,可整体禁用)。
 
