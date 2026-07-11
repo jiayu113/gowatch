@@ -49,7 +49,7 @@ func TestAnalyzer(t *testing.T) {
 		cfg.LLM.Timeout = 5 * time.Second
 
 		llm := &mockLLM{}
-		analyzer := New(cfg, llm, dummyHistory)
+		analyzer := New(cfg, llm, dummyHistory, nil)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -82,7 +82,7 @@ func TestAnalyzer(t *testing.T) {
 		cfg.Limits.Cooldown = 1 * time.Hour
 
 		llm := &mockLLM{}
-		analyzer := New(cfg, llm, dummyHistory)
+		analyzer := New(cfg, llm, dummyHistory, nil)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -109,7 +109,7 @@ func TestAnalyzer(t *testing.T) {
 		cfg.Limits.BreakerOpen = 1 * time.Hour
 
 		llm := &mockLLM{fail: true}
-		analyzer := New(cfg, llm, dummyHistory)
+		analyzer := New(cfg, llm, dummyHistory, nil)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

@@ -87,6 +87,7 @@ func (h *Handler) Routes() *http.ServeMux {
 	mux.HandleFunc("/api/status", RequireLeader(h.leaderState, h.Status))
 	mux.HandleFunc("/api/history", RequireLeader(h.leaderState, h.History))
 	mux.HandleFunc("/api/alerts", RequireLeader(h.leaderState, h.Alerts))
+	mux.HandleFunc("/api/diagnoses", RequireLeader(h.leaderState, h.Diagnoses))
 	mux.HandleFunc("/api/cluster/status", h.ClusterStatus)
 
 	// 访问/metrics时会自动把所有注册的metric序列化成Prometheus能抓取的文本格式输出出来
@@ -183,4 +184,25 @@ func (h *Handler) Alerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+// Diagnoses 返回最近的 AI 诊断记录
+func (h *Handler) Diagnoses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 20
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+	diags, err := h.store.GetRecentDiagnoses(limit)
+	if err != nil {
+		log.Printf("GetRecentDiagnoses error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, diags)
 }

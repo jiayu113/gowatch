@@ -12,6 +12,26 @@
     .up { color: #81c784; font-weight: bold; }
     .down { color: #e57373; font-weight: bold; }
     #meta { color: #888; font-size: 14px; margin-top: 10px; }
+
+    /* AI 诊断卡片 */
+    .diag-card { border: 1px solid #444; border-radius: 6px; margin-top: 14px; background: #252526; overflow: hidden; }
+    .diag-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; background: #2d2d2d; user-select: none; }
+    .diag-head:hover { background: #333; }
+    .diag-head .tgt { color: #4fc3f7; font-weight: bold; }
+    .diag-head .rule { color: #ffb74d; }
+    .diag-head .meta { color: #888; font-size: 12px; margin-left: auto; }
+    .diag-head .arrow { color: #888; transition: transform .15s; }
+    .diag-card.collapsed .arrow { transform: rotate(-90deg); }
+    .diag-card.collapsed .diag-body { display: none; }
+    .diag-body { padding: 12px 16px; border-top: 1px solid #444; line-height: 1.6; }
+    .diag-body h2 { color: #4fc3f7; font-size: 16px; margin: 14px 0 6px; }
+    .diag-body h3 { color: #9ccc65; font-size: 14px; margin: 12px 0 4px; }
+    .diag-body strong { color: #fff; }
+    .diag-body code { background: #1a1a1a; color: #ce9178; padding: 1px 5px; border-radius: 3px; }
+    .diag-body pre { background: #1a1a1a; padding: 10px 12px; border-radius: 4px; overflow-x: auto; border-left: 3px solid #4fc3f7; }
+    .diag-body pre code { background: none; color: #d4d4d4; padding: 0; }
+    .diag-body ul, .diag-body ol { margin: 4px 0 4px 4px; padding-left: 20px; }
+    .diag-body li { margin: 2px 0; }
 </style>
 </head>
 <body>
@@ -43,6 +63,9 @@
         </thead>
         <tbody id="alerts-body"></tbody>
     </table>
+
+    <h2 style="color:#ba68c8;margin-top:30px;">🤖 AI 诊断</h2>
+    <div id="diag-list"></div>
 
 <script>
 // 1. 刷新“当前状态”的函数
@@ -96,13 +119,93 @@ async function refreshAlerts() {
     }
 }
 
+// —— 极简 Markdown 渲染（够展示 AI 诊断即可，无外部依赖）——
+function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function renderMarkdown(md) {
+    if (!md) return '';
+    // 先抽出代码块，用占位符保护，避免内部内容被其它规则误伤
+    const blocks = [];
+    md = md.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {
+        blocks.push('<pre><code>' + escapeHtml(code.replace(/\n$/,'')) + '</code></pre>');
+        return '\u0000BLOCK' + (blocks.length - 1) + '\u0000';
+    });
+    md = escapeHtml(md);
+    const lines = md.split('\n');
+    let html = '', listType = null;
+    const closeList = () => { if (listType) { html += '</' + listType + '>'; listType = null; } };
+    for (let line of lines) {
+        // 行内：加粗、行内代码
+        line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                   .replace(/`([^`]+)`/g, '<code>$1</code>');
+        if (/^\u0000BLOCK\d+\u0000$/.test(line.trim())) { closeList(); html += line; continue; }
+        let m;
+        if (m = line.match(/^###\s+(.*)/)) { closeList(); html += '<h3>' + m[1] + '</h3>'; }
+        else if (m = line.match(/^##\s+(.*)/)) { closeList(); html += '<h2>' + m[1] + '</h2>'; }
+        else if (m = line.match(/^#\s+(.*)/)) { closeList(); html += '<h2>' + m[1] + '</h2>'; }
+        else if (m = line.match(/^\s*\d+\.\s+(.*)/)) {
+            if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+            html += '<li>' + m[1] + '</li>';
+        }
+        else if (m = line.match(/^\s*[-*]\s+(.*)/)) {
+            if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+            html += '<li>' + m[1] + '</li>';
+        }
+        else if (line.trim() === '') { closeList(); }
+        else { closeList(); html += '<p style="margin:4px 0;">' + line + '</p>'; }
+    }
+    closeList();
+    // 还原代码块
+    html = html.replace(/\u0000BLOCK(\d+)\u0000/g, (m, i) => blocks[+i]);
+    return html;
+}
+
+// 刷新 AI 诊断
+async function refreshDiagnoses() {
+    try {
+        const resp = await fetch('/api/diagnoses?limit=20');
+        const data = await resp.json();
+        const list = document.getElementById('diag-list');
+        list.innerHTML = '';
+        if (!data || data.length === 0) {
+            list.innerHTML = '<div style="color:#888;">暂无 AI 诊断</div>';
+            return;
+        }
+        data.forEach((d, idx) => {
+            const card = document.createElement('div');
+            // 默认只展开第一条（最新），其余折叠
+            card.className = 'diag-card' + (idx === 0 ? '' : ' collapsed');
+            const t = new Date(d.created_at).toLocaleString();
+            const secs = (d.latency_ms / 1000).toFixed(1);
+            card.innerHTML = `
+                <div class="diag-head">
+                    <span class="arrow">▼</span>
+                    <span class="tgt">${d.target}</span>
+                    <span class="rule">${d.rule_name}</span>
+                    <span class="meta">${d.model} · ${secs}s · ${t}</span>
+                </div>
+                <div class="diag-body">${renderMarkdown(d.advice)}</div>
+            `;
+            card.querySelector('.diag-head').addEventListener('click', () => {
+                card.classList.toggle('collapsed');
+            });
+            list.appendChild(card);
+        });
+    } catch (e) {
+        console.error(e);
+    }
+}
+
 // 3. 页面刚打开时，立刻执行一次请求
 refresh();
 refreshAlerts();
+refreshDiagnoses();
 
-// 4. 之后每隔 5 秒钟，两个表格都会自动向后台请求新数据并刷新
+// 4. 之后每隔 5 秒钟，自动刷新
 setInterval(refresh, 5000);
 setInterval(refreshAlerts, 5000);
+setInterval(refreshDiagnoses, 5000);
 </script>
 </body>
 </html>

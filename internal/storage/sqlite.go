@@ -67,6 +67,30 @@ func New(path string) (*Store, error) {
 		return nil, err
 	}
 
+	// AI 诊断结果表：一条告警触发一次 LLM 分析,产出一条诊断
+	_, err = db.Exec(`
+	CREATE TABLE IF NOT EXISTS diagnoses(
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	rule_name TEXT NOT NULL,
+	target TEXT NOT NULL,
+	reason TEXT,
+	advice TEXT NOT NULL,
+	model TEXT,
+	latency_ms INTEGER,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)
+	`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_diagnoses_target ON diagnoses(target)`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	db.SetMaxOpenConns(1)
 	db.SetConnMaxLifetime(time.Hour)
 
@@ -228,6 +252,48 @@ func (s *Store) GetRecentAlerts(n int) ([]alert.Event, error) {
 			return nil, err
 		}
 		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
+// Diagnosis 是一条 AI 诊断记录。
+// 放在 storage 包里定义,避免 analyzer 反向依赖 api 层的 DTO。
+type Diagnosis struct {
+	RuleName  string    `json:"rule_name"`
+	Target    string    `json:"target"`
+	Reason    string    `json:"reason"`
+	Advice    string    `json:"advice"`
+	Model     string    `json:"model"`
+	LatencyMS int64     `json:"latency_ms"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SaveDiagnosis 写入一条 AI 诊断结果。
+func (s *Store) SaveDiagnosis(d Diagnosis) error {
+	_, err := s.db.Exec(
+		`INSERT INTO diagnoses (rule_name,target,reason,advice,model,latency_ms) VALUES (?,?,?,?,?,?)`,
+		d.RuleName, d.Target, d.Reason, d.Advice, d.Model, d.LatencyMS,
+	)
+	return err
+}
+
+// GetRecentDiagnoses 返回最近 n 条 AI 诊断,按时间倒序。
+func (s *Store) GetRecentDiagnoses(n int) ([]Diagnosis, error) {
+	rows, err := s.db.Query(
+		`SELECT rule_name,target,reason,advice,model,latency_ms,created_at
+		 FROM diagnoses ORDER BY created_at DESC LIMIT ?`, n,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Diagnosis
+	for rows.Next() {
+		var d Diagnosis
+		if err := rows.Scan(&d.RuleName, &d.Target, &d.Reason, &d.Advice, &d.Model, &d.LatencyMS, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
 	}
 	return out, rows.Err()
 }

@@ -17,10 +17,15 @@ import (
 
 type historyFn func(target string, limit int) ([]checker.Result, error)
 
+// saveDiagFn 注入落库函数(store.SaveDiagnosis 的适配),
+// 同样用函数注入,保持 analyzer 不直接 import storage 包。
+type saveDiagFn func(rule, target, reason, advice, model string, latencyMS int64) error
+
 type Analyzer struct {
-	cfg     *Config
-	llm     LLM
-	history historyFn // 注入 store.GetByTarget,不直接依赖 storage 包(也躲开潜在 import 环)
+	cfg      *Config
+	llm      LLM
+	history  historyFn // 注入 store.GetByTarget,不直接依赖 storage 包(也躲开潜在 import 环)
+	saveDiag saveDiagFn // 注入落库,可为 nil(此时只写 jsonl 文件)
 
 	ch chan alert.Event
 
@@ -32,9 +37,9 @@ type Analyzer struct {
 	dayCount  int
 }
 
-func New(cfg *Config, llm LLM, history historyFn) *Analyzer {
+func New(cfg *Config, llm LLM, history historyFn, saveDiag saveDiagFn) *Analyzer {
 	return &Analyzer{
-		cfg: cfg, llm: llm, history: history,
+		cfg: cfg, llm: llm, history: history, saveDiag: saveDiag,
 		ch:      make(chan alert.Event, 16),
 		lastRun: map[string]time.Time{},
 	}
@@ -158,4 +163,11 @@ func (a *Analyzer) persist(ev alert.Event, advice string, took time.Duration) {
 		Time: time.Now(), Rule: ev.RuleName, Target: ev.Target, Reason: ev.Reason,
 		Advice: advice, Model: a.cfg.LLM.Model, LatencyMS: took.Milliseconds(),
 	})
+
+	// 同时落库,供 Web UI 读取。落库失败不影响已写好的 jsonl 备份。
+	if a.saveDiag != nil {
+		if err := a.saveDiag(ev.RuleName, ev.Target, ev.Reason, advice, a.cfg.LLM.Model, took.Milliseconds()); err != nil {
+			log.Printf("aiops: persist to db failed: %v", err)
+		}
+	}
 }

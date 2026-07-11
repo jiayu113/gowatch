@@ -127,7 +127,15 @@ func main() {
 		if llm == nil {
 			log.Printf("aiops: llm 初始化失败，AI 分析禁用（主链路正常运行）")
 		} else {
-			analyzer = aiops.New(aiCfg, llm, store.GetByTarget)
+			// 适配 store.SaveDiagnosis 为 analyzer 期望的函数签名,
+			// 让 analyzer 不必直接 import storage 包。
+			saveDiag := func(rule, target, reason, advice, model string, latencyMS int64) error {
+				return store.SaveDiagnosis(storage.Diagnosis{
+					RuleName: rule, Target: target, Reason: reason,
+					Advice: advice, Model: model, LatencyMS: latencyMS,
+				})
+			}
+			analyzer = aiops.New(aiCfg, llm, store.GetByTarget, saveDiag)
 			go analyzer.Run(ctx)
 			log.Printf("aiops: enabled model=%s", aiCfg.LLM.Model)
 		}

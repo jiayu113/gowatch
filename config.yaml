@@ -36,3 +36,4 @@ targets:
     type: cert
     url: badssl.com:443
     cert_warn_days: 14
+    
