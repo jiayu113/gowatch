@@ -1,8 +1,14 @@
 # GoWatch
 
+![License](https://img.shields.io/github/license/jiayu113/gowatch)
+![Go Version](https://img.shields.io/github/go-mod/go-version/jiayu113/gowatch)
+<!-- CI workflow 加上后取消下面这行注释:
+![CI](https://github.com/jiayu113/gowatch/actions/workflows/ci.yml/badge.svg)
+-->
+
 > 用 Go 写的轻量探活监控服务:HTTP / TCP / SSL 证书探测、告警规则引擎、etcd 选主的多实例 active-standby、Prometheus 指标、AIOps 旁路诊断(实验性)。单二进制、无 CGO、跨平台。
 
-![Web 面板截图](image-2.png)
+![Web 面板](docs/dashboard.png)
 
 GoWatch 周期性对一组 HTTP / TCP / SSL 证书目标做健康检查,结果按错误类型分类后写入 SQLite,通过 Web 面板、REST API 和 Prometheus `/metrics` 暴露,命中告警规则后走 webhook 通知。支持多实例部署:通过 etcd 选主实现 active-standby,leader 失效后 follower 自动接管;不开 `--cluster` 时行为与单机完全一致。
 
@@ -14,7 +20,7 @@ GoWatch 周期性对一组 HTTP / TCP / SSL 证书目标做健康检查,结果�
 - **错误分类**:网络错误归为 `timeout` / `refused` / `dns` / `non_2xx` / `cert_expiring` / `other`,告警规则和指标都按类型分桶,能区分"网络抖动""服务挂了""证书快过期"
 - **告警引擎**:三种规则语义 + cooldown 抑制 + webhook 重试;抑制状态经 etcd 持久化,跨重启 / 跨 leader 切换不清零
 - **多实例 active-standby**:etcd 选主,任意时刻单活探测;集群身份对指标、API 和上游负载均衡可见
-- **AIOps 旁路诊断(实验性)**:告警触发后生成 LLM 根因分析与排查建议,见[下文](#aiops-诊断层实验性)
+- **AIOps 旁路诊断(实验性)**:告警触发后生成 LLM 根因分析与排查建议,见[下文](#aiops-诊断层)
 - **配置热加载**:fsnotify 监听 + debounce 防抖,改 `config.yaml` 不用重启
 - **可观测**:Prometheus 指标(含证书剩余天数、leader 身份)+ Web 面板 + REST API + CLI 查询
 - **SQLite 持久化**:纯 Go 驱动无 CGO;优雅关闭,不丢数据
@@ -79,6 +85,8 @@ rules:
 
 三种规则类型:`consecutive_status`(连续 N 次同状态)、`consecutive_error_type`(连续 N 次同错误类型)、`error_rate_window`(时间窗口内错误率)。语义细节与设计取舍见 [docs/architecture.md](docs/architecture.md)。
 
+![最近告警](docs/alerts.png)
+
 ### 命令行选项
 
 | 选项 | 默认值 | 说明 |
@@ -136,6 +144,8 @@ rules:
 - **成本三闸门**:同目标冷却 / 每日上限 / 连续失败熔断
 - **建议不执行**:输出仅落日志与 JSONL,不触发任何动作(设计立场)
 - **配置见 `aiops.example.yaml`;未配置即禁用**
+
+![AI 诊断示例](docs/aiops-diagnosis.png)
 
 启用:
 
