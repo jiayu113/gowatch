@@ -32,6 +32,12 @@ func (m *mockLLM) Complete(_ context.Context, _, _ string) (string, error) {
 	return "## 可能根因\n- mock", nil
 }
 
+func (m *mockLLM) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
 // dummyHistory 模拟历史查询，直接返回空
 func dummyHistory(target string, limit int) ([]checker.Result, error) {
 	return nil, nil
@@ -60,8 +66,8 @@ func TestAnalyzer(t *testing.T) {
 
 		time.Sleep(100 * time.Millisecond)
 
-		if llm.calls != 1 {
-			t.Errorf("成功路 calls 期望 1, 实际 %d", llm.calls)
+		if llm.count() != 1 {
+			t.Errorf("成功路 calls 期望 1, 实际 %d", llm.count())
 		}
 
 		today := time.Now().Format("20060102")
@@ -95,8 +101,8 @@ func TestAnalyzer(t *testing.T) {
 		analyzer.Submit(ev2)
 		time.Sleep(100 * time.Millisecond)
 
-		if llm.calls != 1 {
-			t.Errorf("冷却路 calls 期望 1, 实际 %d", llm.calls)
+		if llm.count() != 1 {
+			t.Errorf("冷却路 calls 期望 1, 实际 %d", llm.count())
 		}
 	})
 
@@ -125,8 +131,8 @@ func TestAnalyzer(t *testing.T) {
 		analyzer.Submit(alert.Event{RuleName: "R4", Target: "T4"})
 		time.Sleep(100 * time.Millisecond)
 
-		if llm.calls != 3 {
-			t.Errorf("熔断路 calls 期望 3, 实际 %d", llm.calls)
+		if llm.count() != 3 {
+			t.Errorf("熔断路 calls 期望 3, 实际 %d", llm.count())
 		}
 	})
 }
