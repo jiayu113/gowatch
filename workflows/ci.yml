@@ -1,13 +1,26 @@
-name: CI
+name: ci
 
-on: [push, pull_request]    
+on:
+  push:
+    branches: [main]      
+  pull_request:           
 
 jobs:
   test:
-    runs-on: ubuntu-latest    
-      - uses: actions/checkout@v4        
-      - uses: actions/setup-go@v5       
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4       
+
+      - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod        
-      - run: go vet ./...                
-      - run: go test ./...               
+          go-version-file: go.mod       
+          cache: true                   
+
+      - name: Vet（静态检查）
+        run: go vet ./...
+
+      - name: Test（单元测试，带竞态检测）
+        run: go test -race -count=1 ./...
+
+      - name: Build（确认可编译）
+        run: go build ./...

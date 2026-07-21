@@ -2,11 +2,11 @@
 
 ![License](https://img.shields.io/github/license/jiayu113/gowatch)
 ![Go Version](https://img.shields.io/github/go-mod/go-version/jiayu113/gowatch)
-<!-- CI workflow 加上后取消下面这行注释:
-![CI](https://github.com/jiayu113/gowatch/actions/workflows/ci.yml/badge.svg)
--->
 
-> 用 Go 写的轻量探活监控服务:HTTP / TCP / SSL 证书探测、告警规则引擎、etcd 选主的多实例 active-standby、Prometheus 指标、AIOps 旁路诊断(实验性)。单二进制、无 CGO、跨平台。
+![CI](https://github.com/jiayu113/gowatch/actions/workflows/ci.yml/badge.svg)
+
+
+> 用 Go 写的轻量探活监控服务:HTTP / TCP / SSL 证书探测、告警规则引擎、etcd 选主的多实例 active-standby、Prometheus 指标、AIOps 旁路诊断。单二进制、无 CGO、跨平台。
 
 ![Web 面板](docs/dashboard.png)
 
